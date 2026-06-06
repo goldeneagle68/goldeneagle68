@@ -1,0 +1,671 @@
+<!doctype html>
+<html lang="en">
+<head>
+<meta charset="utf-8"/>
+<meta name="viewport" content="width=device-width,initial-scale=1"/>
+<title>Luxury Minimalist Engine Atlas</title>
+<link rel="stylesheet" href="src/styles.css"/>
+
+</head>
+<body>
+<header class="top">
+  <div class="wrap">
+    <div>
+      <div class="eyebrow">In Automobiles lab</div>
+      <h1>Luxury Minimalist Engine Atlas</h1>
+    </div>
+    <div class="status" id="runStatus">Engine off</div>
+  </div>
+</header>
+
+<div class="welcomeScreen" id="welcomeScreen">
+  <div class="letterWrap">
+    <div class="letterSeal">✦</div>
+    <div class="letterCard">
+      <div class="eyebrow">A letter from the sandbox</div>
+      <h2 class="letterTitle" id="welcomeTitle"></h2>
+      <p class="letterBody" id="welcomeText"></p>
+      <div class="welcomeActions modeChoice">
+        <button class="btn active" id="welcomeBeginner">Beginner mode</button>
+        <button class="option" id="welcomeAdvanced">Advanced mode</button>
+        <button class="btn start" id="welcomeStartSim">Start simulator</button>
+        <button class="option" id="welcomeEco">Enable Eco mode</button>
+      </div>
+      <div class="ghostNote">Beginner gives you a brief guide and a simpler interface. Advanced keeps every tuning, dyno, transmission, and premium system control visible.</div>
+    </div>
+  </div>
+</div>
+
+<main class="app">
+  <section class="stage">
+    <div class="canvasWrap">
+      <canvas id="sim"></canvas>
+      <div class="matchToast" id="matchToast"><small>Perfect real engine match</small><b id="matchToastText">Congratulations!</b></div>
+      <div class="overlay" id="overlayInfo">
+        <div class="overlayHeader">
+          <button class="overlayToggle" id="overlayToggle">Minimize info cards</button>
+          <span class="ecoPill" id="ecoBadge">Eco mode off</span>
+        </div>
+        <div class="overlayCards">
+          <div class="card"><small>Mode</small><b id="layoutLabel">V8</b></div>
+          <div class="card"><small>Specific property</small><b id="configLabel">Cylinders: 8</b></div>
+          <div class="card"><small>Transmission</small><b id="transmissionLabel">A1 · 0 km/h</b></div>
+          <div class="card"><small>Premium systems</small><b>Separate turbo · hybrid · nuclear · combo</b></div>
+        </div>
+      </div>
+      <button class="sceneBtn restorePanelBtn hide" id="restorePanelBtn">Show menus</button>
+      <div class="sceneDrivePad hide" id="sceneDrivePad">
+        <div class="scenePadLabel">Quick controls</div>
+        <div class="scenePadRow pedals">
+          <button class="scenePadButton" id="sceneClutchBtn">Clutch</button>
+          <button class="scenePadButton" id="sceneBrakeBtn">Brake</button>
+          <button class="scenePadButton" id="sceneGasBtn">Gas</button>
+        </div>
+        <div class="scenePadRow shifters">
+          <button class="scenePadButton" id="sceneShiftDownBtn">Shift −</button>
+          <button class="scenePadButton" id="sceneAutoManualBtn">Mode: Auto</button>
+          <button class="scenePadButton" id="sceneShiftUpBtn">Shift +</button>
+        </div>
+      </div>
+      <div class="sceneControls">
+        <span class="sceneHint">Drag scene · use slider to zoom</span>
+        <div class="sceneSliderWrap">
+          <label for="sceneZoomSlider">Zoom</label>
+          <input id="sceneZoomSlider" type="range" min="20" max="180" step="1" value="35"/>
+          <span class="sceneSliderReadout"><b id="sceneZoomLabel">35%</b> · default <b id="sceneDefaultLabel">35%</b></span>
+        </div>
+        <button class="sceneBtn" id="sceneReset">Reset to 35%</button>
+      </div>
+    </div>
+    <div class="dashboardGauges" id="dashboardGauges">
+      <div class="gaugeCard modeConvertible">
+        <div class="gaugeDial" id="rpmGauge">
+          <div class="gaugeRedline" id="rpmGaugeRedline"></div>
+          <div class="gaugeScale" id="rpmGaugeScale"></div>
+          <div class="gaugeName" id="rpmGaugeName">RPM</div>
+          <div class="gaugeText"><b id="rpmGaugeText">0</b><small id="rpmGaugeUnit">rpm</small></div>
+        </div>
+        <div class="digitalGauge altDigitalGauge" id="rpmDigitalGauge">
+          <small id="rpmDigitalGaugeName">RPM</small>
+          <b id="rpmDigitalGaugeText">0</b>
+          <span id="rpmDigitalGaugeUnit">rpm</span>
+        </div>
+        <div class="gaugeCaption" id="rpmGaugeCaption">Tachometer</div>
+      </div>
+      <div class="gaugeCard modeConvertible">
+        <div class="gaugeDial" id="speedGauge">
+          <div class="gaugeScale" id="speedGaugeScale"></div>
+          <div class="gaugeName" id="speedGaugeName">Speed</div>
+          <div class="gaugeText"><b id="speedGaugeText">0</b><small id="speedGaugeUnit">km/h</small></div>
+        </div>
+        <div class="digitalGauge altDigitalGauge" id="speedDigitalGauge">
+          <small id="speedDigitalGaugeName">Speed</small>
+          <b id="speedDigitalGaugeText">0</b>
+          <span id="speedDigitalGaugeUnit">km/h</span>
+        </div>
+        <div class="gaugeCaption" id="speedGaugeCaption">Speedometer</div>
+      </div>
+      <div class="gaugeCard">
+        <div class="digitalGauge" id="gearGauge">
+          <small id="gearGaugeName">Gear / Power</small>
+          <b id="gearGaugeText">1</b>
+          <span id="gearGaugeUnit">Automatic</span>
+          <span id="gearHpText">0 hp</span>
+        </div>
+        <div class="gaugeCaption" id="gearGaugeCaption">Gear + HP indicator</div>
+      </div>
+      <div class="gaugeCard modeConvertible" id="auxGaugeCard">
+        <div class="gaugeDial" id="boostGauge">
+          <div class="gaugeScale" id="boostGaugeScale"></div>
+          <div class="gaugeName" id="boostGaugeName">Boost</div>
+          <div class="gaugeText"><b id="boostGaugeText">0.0</b><small id="boostGaugeUnit">bar</small></div>
+        </div>
+        <div class="digitalGauge altDigitalGauge" id="boostDigitalGauge">
+          <small id="boostDigitalGaugeName">Boost</small>
+          <b id="boostDigitalGaugeText">0.0</b>
+          <span id="boostDigitalGaugeUnit">bar</span>
+        </div>
+        <div class="digitalGauge auxDigitalGauge" id="afterburnerDigitalGauge">
+          <small id="afterburnerDigitalName">Afterburner</small>
+          <b id="afterburnerDigitalText">OFF</b>
+          <span id="afterburnerDigitalUnit">AB</span>
+        </div>
+        <div class="gaugeCaption" id="boostGaugeCaption">Boost pressure</div>
+      </div>
+      <div class="gaugeCard">
+        <div class="digitalGauge" id="tempGauge">
+          <small id="tempGaugeName">Coolant Temperature</small>
+          <b id="tempGaugeText">20°</b>
+          <span id="tempGaugeUnit">°C</span>
+        </div>
+        <div class="gaugeCaption" id="tempGaugeCaption">Digital display</div>
+      </div>
+    </div>
+    <div class="readouts">
+      <div class="readout"><small>RPM</small><b id="rpmOut">0</b></div>
+      <div class="readout"><small>Gear</small><b id="gearOut">1</b></div>
+      <div class="readout"><small>Speed</small><b id="speedOut">0 km/h</b></div>
+      <div class="readout"><small id="outputLabel">Torque</small><b id="outputOut">0 Nm</b></div>
+      <div class="readout"><small id="powerLabel">Power</small><b id="powerOut">0 hp</b></div>
+      <div class="readout"><small id="auxLabel">Boost</small><b id="auxOut">0.0 bar</b></div>
+      <div class="readout"><small id="tempLabel">Temp</small><b id="tempOut">20°C</b></div>
+    </div>
+  </section>
+
+  <aside class="panel">
+    <div class="card premiumBox beginnerGuide" id="beginnerGuide">
+      <small>Beginner quick guide <span class="goldTag">Simple</span></small>
+      <b>1. Pick an engine. 2. Press Start Engine. 3. Use Gas and Brake.</b>
+      <p class="comboHint">Use the throttle slider for gentle control. Beginner keeps automatic transmission on, hides advanced tuning, and uses digital gauges so you can focus on driving and discovering engines.</p>
+    </div>
+
+    <div class="card premiumBox buildSummary" id="buildSummary">
+      <small>Build result summary <span class="goldTag">Live</span></small>
+      <div class="buildSummaryGrid">
+        <div class="buildMetric"><small>Peak power</small><b id="summaryPeakPower">0 hp</b></div>
+        <div class="buildMetric"><small>Peak torque</small><b id="summaryPeakTorque">0 Nm</b></div>
+        <div class="buildMetric"><small>0–100 estimate</small><b id="summaryZeroToHundred">—</b></div>
+        <div class="buildMetric"><small>Top speed estimate</small><b id="summaryTopSpeed">—</b></div>
+        <div class="buildMetric wide"><small>Risk</small><b class="riskText" id="summaryRisk">Run the engine to collect data</b></div>
+        <div class="buildMetric wide"><small>Best use</small><b class="bestText" id="summaryBestUse">—</b></div>
+      </div>
+      <button class="option" id="summaryResetBtn">Reset build results</button>
+    </div>
+
+    <div class="panelTools">
+      <button class="miniBtn advancedOnly" id="collapseAllBtn">Collapse all menus</button>
+      <button class="miniBtn advancedOnly" id="expandAllBtn">Expand all menus</button>
+      <button class="miniBtn active advancedOnly" id="graphToggleBtn">Graph on</button>
+      <button class="miniBtn" id="ecoModeBtn">Eco mode off</button>
+      <button class="miniBtn" id="mobileModeBtn">Mobile mode off</button>
+      <button class="miniBtn advancedOnly" id="panelMinBtn">Minimize this panel</button>
+    </div>
+    <div class="section">
+      <button class="head" data-section="engine"><span>Base engine + premium add-ons</span><b>⌄</b></button>
+      <div class="body" id="engineSection">
+        <label class="label">Base engine type
+          <select id="engineType">
+            <optgroup label="Piston automobile">
+              <option value="inline">Inline piston</option>
+              <option value="v" selected>V piston</option>
+              <option value="w">W piston ✦ Premium</option>
+              <option value="flat">Flat / boxer piston</option>
+              <option value="vr">VR narrow-angle piston</option>
+              <option value="single">Single-cylinder</option>
+              <option value="parallel_twin">Parallel twin</option>
+              <option value="straight_twin">Straight twin</option>
+              <option value="straight_three">Straight three</option>
+              <option value="straight_four">Straight four</option>
+              <option value="straight_five">Straight five</option>
+              <option value="straight_six">Straight six</option>
+              <option value="straight_eight">Straight eight</option>
+              <option value="v_twin">V-twin</option>
+              <option value="v4">V4</option>
+              <option value="v6">V6</option>
+              <option value="v8">V8</option>
+              <option value="v10">V10</option>
+              <option value="v12">V12 ✦ Premium</option>
+              <option value="v16">V16 ✦ Premium</option>
+              <option value="h_engine">H engine ✦ Premium</option>
+              <option value="u_engine">U engine</option>
+              <option value="x_engine">X engine ✦ Premium</option>
+              <option value="opposed_piston">Opposed-piston diesel</option>
+              <option value="diesel">Diesel piston</option>
+              <option value="hemi">Hemi V8</option>
+              <option value="atkinson">Atkinson cycle</option>
+              <option value="miller">Miller cycle</option>
+              <option value="sleeve_valve">Sleeve-valve piston</option>
+              <option value="two_stroke">Two-stroke piston</option>
+            </optgroup>
+            <optgroup label="Aircraft / special piston">
+              <option value="radial">Radial piston</option>
+              <option value="rotary_radial">Rotary radial aircraft</option>
+              <option value="compound_piston">Turbo-compound piston ✦ Premium</option>
+              <option value="free_piston">Free-piston engine</option>
+              <option value="stirling">Stirling engine</option>
+              <option value="steam">Steam engine</option>
+            </optgroup>
+            <optgroup label="Rotary / non-piston">
+              <option value="rotary">Rotary Wankel</option>
+              <option value="quasiturbine">Quasiturbine</option>
+              <option value="gerotor">Gerotor motor</option>
+              <option value="scroll">Scroll expander</option>
+            </optgroup>
+            <optgroup label="Electric">
+              <option value="electric">Electric motor</option>
+              <option value="ac_induction">AC induction motor</option>
+              <option value="pmsm">Permanent magnet synchronous motor</option>
+              <option value="bldc">Brushless DC motor</option>
+              <option value="brushed_dc">Brushed DC motor</option>
+              <option value="switched_reluctance">Switched reluctance motor</option>
+              <option value="axial_flux">Axial-flux motor</option>
+              <option value="hub_motor">Hub motor</option>
+            </optgroup>
+            <optgroup label="Gas turbine / jet">
+              <option value="turbojet">Turbojet</option>
+              <option value="turbofan">Turbofan</option>
+              <option value="geared_turbofan">Geared turbofan ✦ Premium</option>
+              <option value="turboprop">Turboprop</option>
+              <option value="turboshaft">Turboshaft</option>
+              <option value="ramjet">Ramjet</option>
+              <option value="scramjet">Scramjet ✦ Premium</option>
+              <option value="pulsejet">Pulsejet</option>
+              <option value="rocket">Rocket engine ✦ Premium</option>
+            </optgroup>
+</select>
+        </label>
+
+        <label class="label advancedOnly">Engine cover
+          <select id="engineCover" class="premiumSelect">
+            <option value="none">No cover / exposed engine</option>
+            <option value="corvette_red">Red performance cover</option>
+            <option value="transparent">Transparent technical cover</option>
+            <option value="black">Luxury black cover</option>
+            <option value="aluminum">Brushed aluminum cover</option>
+            <option value="carbon">Carbon fiber cover</option>
+            <option value="gold">Black cover with gold trim</option>
+            <option value="glass">Smoked glass cover</option>
+          </select>
+        </label>
+
+        <label class="label advancedOnly">Exhaust manifold
+          <select id="exhaustManifold" class="premiumSelect">
+            <option value="compact_cast">Compact cast manifold</option>
+            <option value="equal_length_headers" selected>Equal-length chrome headers</option>
+            <option value="shorty_headers">Shorty performance headers</option>
+            <option value="turbo_manifold">Turbo manifold</option>
+            <option value="race_merged_collector">Race merged collector</option>
+          </select>
+        </label>
+
+        <label class="label advancedOnly">Intake pipe position: <span id="intakePipeOffsetOut">0 px</span>
+          <input id="intakePipeOffset" type="range" min="-80" max="80" step="1" value="0"/>
+        </label>
+
+        <label class="label advancedOnly">Exhaust pipe position: <span id="exhaustPipeOffsetOut">0 px</span>
+          <input id="exhaustPipeOffset" type="range" min="-80" max="80" step="1" value="0"/>
+        </label>
+
+        <button class="option advancedOnly active" id="pipesVisibleBtn">Pipes visible</button>
+
+        <div class="card premiumBox advancedOnly">
+          <small>Premium modular systems <span class="goldTag">Gold</span></small>
+          <p class="comboHint">Choose a base engine above, then add turbo, hybrid, fuel cell, nuclear support, or a second engine module. These are separate add-ons now.</p>
+        </div>
+
+        <label class="label advancedOnly">Turbo add-on <span class="goldTag">Premium</span>
+          <select id="turboAddon" class="premiumSelect">
+            <option value="none">No forced induction</option>
+            <option value="single">Single turbocharger</option>
+            <option value="twin">Twin turbochargers</option>
+            <option value="tri">Tri-turbo setup</option>
+            <option value="quad">Quad-turbo setup</option>
+            <option value="supercharger">Supercharger</option>
+            <option value="electric">Electric anti-lag turbo</option>
+            <option value="compound">Turbo-compound recovery turbine</option>
+          </select>
+        </label>
+
+        <label class="label advancedOnly">Hybrid / hydrogen system <span class="goldTag">Premium</span>
+          <select id="hybridSystem" class="premiumSelect">
+            <option value="none">No hybrid system</option>
+            <option value="mild">48V mild-hybrid MGU</option>
+            <option value="full">Full hybrid drive motor</option>
+            <option value="plugin">Plug-in hybrid battery + motor</option>
+            <option value="fuel_cell">Hydrogen fuel-cell stack + motor</option>
+          </select>
+        </label>
+
+        <button class="option premiumFeature fuelTankBtn on advancedOnly" id="fuelTankBtn">Fuel tanks visible / forced on</button>
+
+        <label class="label advancedOnly">Nuclear fission support <span class="goldTag">Experimental</span>
+          <select id="nuclearFission" class="premiumSelect">
+            <option value="none">No nuclear fission module</option>
+            <option value="rtg">Radioisotope generator support</option>
+            <option value="micro">Micro fission reactor support</option>
+          </select>
+        </label>
+
+        <label class="label advancedOnly">Combine second engine <span class="goldTag">Premium</span>
+          <select id="secondaryEngine" class="premiumSelect">
+            <option value="none">No secondary engine</option>
+            <option value="electric">Electric traction motor</option>
+            <option value="rotary">Rotary generator module</option>
+            <option value="turbojet">Turbojet booster</option>
+            <option value="turbofan">Turbofan cruise booster</option>
+            <option value="rocket">Rocket launch booster</option>
+          </select>
+        </label>
+
+        <label class="label advancedOnly">Premium system intensity: <span id="systemPowerOut">50%</span>
+          <input id="systemPower" type="range" min="0" max="100" step="1" value="50"/>
+        </label>
+
+        <div class="card matchCard advancedOnly">
+          <small>Real famous engine detector <span class="goldTag">Premium</span></small>
+          <b id="famousMatchOut">No perfect famous-car match yet</b>
+          <p class="comboHint" id="famousSoundOut">Sound profile: custom sandbox synth</p>
+        </div>
+
+        <div class="card discoveredCard advancedOnly">
+          <small>Discovered real car engines <span class="goldTag">Live</span></small>
+          <div class="discoveredMeta">
+            <b id="discoveredEngineCount">0 discovered</b>
+            <span class="discoveredPill" id="discoveredEngineProgress">0 / 9</span>
+          </div>
+          <div class="discoveredList" id="discoveredEngineList">
+            <p class="discoveredEmpty">Match a real engine profile to add it here.</p>
+          </div>
+        </div>
+
+        <div class="section">
+          <button class="head" data-section="missingGarage"><span>Famous engines still missing</span><b>⌄</b></button>
+          <div class="body" id="missingGarageSection">
+            <div class="garageGrid" id="missingEngineGallery"></div>
+          </div>
+        </div>
+
+        <label class="label">Primary count: <span id="unitsOut">8</span>
+          <input id="unitsSlider" type="range" min="3" max="16" step="1" value="8"/>
+        </label>
+
+        <label class="label" id="displacementWrap">Displacement: <span id="dispOut">4.0 L</span>
+          <input id="displacement" type="range" min="1.0" max="8.0" step="0.1" value="4.0"/>
+        </label>
+
+        <label class="label" id="compressionWrap">Compression: <span id="compOut">10.0:1</span>
+          <input id="compression" type="range" min="7" max="14" step="0.1" value="10"/>
+        </label>
+
+        <label class="label advancedOnly" id="extra1Wrap"><span id="extra1Label">Extra property A</span>: <span id="extra1Out">0</span>
+          <input id="extra1" type="range" min="0" max="10" step="1" value="0"/>
+        </label>
+
+        <label class="label advancedOnly" id="extra2Wrap"><span id="extra2Label">Extra property B</span>: <span id="extra2Out">0</span>
+          <input id="extra2" type="range" min="0" max="10" step="1" value="0"/>
+        </label>
+
+        <div class="row">
+          <button class="option hide" id="afterburnerBtn">Afterburner off</button>
+          <div></div>
+        </div>
+      </div>
+    </div>
+
+    <div class="section">
+      <button class="head" data-section="vehicle"><span>Vehicle body + drivetrain</span><b>⌄</b></button>
+      <div class="body" id="vehicleSection">
+        <div class="card premiumBox">
+          <small>Chassis dynamics <span class="goldTag">New</span></small>
+          <p class="comboHint">Drivetrain, body shape, and spoiler package now affect launch grip, mass, drag, downforce, acceleration, and maximum speed.</p>
+        </div>
+
+        <label class="label advancedOnly">Gauge style
+          <select id="gaugeStyle" class="premiumSelect">
+            <option value="classic">Classic silver</option>
+            <option value="maybach">Maybach-inspired black / gold</option>
+            <option value="luxury_white">Luxury white / champagne</option>
+            <option value="lfa">LFA-inspired tachometer</option>
+            <option value="digital_blue">Digital blue</option>
+          </select>
+        </label>
+
+        <label class="label advancedOnly">Gauge display mode
+          <select id="gaugeDisplayMode" class="premiumSelect">
+            <option value="analog">Analog gauges</option>
+            <option value="digital">Digital gauges</option>
+          </select>
+        </label>
+
+        <label class="label">Drive system
+          <select id="vehicleDrive" class="premiumSelect">
+            <option value="fwd">FWD · front-wheel drive</option>
+            <option value="rwd">RWD · rear-wheel drive</option>
+            <option value="awd">AWD · all-wheel drive</option>
+            <option value="4x4">4x4 · off-road transfer case</option>
+            <option value="hover">Hover · magnetic / air cushion drive</option>
+          </select>
+        </label>
+
+        <label class="label">Body type
+          <select id="bodyType" class="premiumSelect">
+            <option value="coupe">Sports coupe</option>
+            <option value="supercar">Supercar</option>
+            <option value="hypercar">Hypercar ✦ Premium</option>
+            <option value="sedan">Performance sedan</option>
+            <option value="wagon">Performance wagon</option>
+            <option value="hatch">Hot hatch</option>
+            <option value="suv">SUV / crossover</option>
+            <option value="truck">Truck / pickup</option>
+            <option value="offroad">Off-road 4x4</option>
+            <option value="formula">Formula prototype ✦ Premium</option>
+          </select>
+        </label>
+
+        <label class="label advancedOnly">Spoiler / aero package
+          <select id="spoilerPackage" class="premiumSelect">
+            <option value="none">No spoiler</option>
+            <option value="lip">Small lip spoiler</option>
+            <option value="wing">GT wing</option>
+            <option value="active">Active aero wing ✦ Premium</option>
+            <option value="drag">Low-drag aero kit</option>
+            <option value="offroad">Roof rack / off-road kit</option>
+          </select>
+        </label>
+
+        <div class="card premiumBox advancedOnly">
+          <small>Tire + mâm xe / rims <span class="goldTag">New</span></small>
+          <p class="comboHint">Tire type, size, and rims affect grip, rolling resistance, mass, acceleration, and top speed.</p>
+        </div>
+
+        <label class="label advancedOnly">Tire type
+          <select id="tireType" class="premiumSelect">
+            <option value="eco">Eco low-rolling-resistance tire</option>
+            <option value="street" selected>Street performance tire</option>
+            <option value="sport">Sport summer tire</option>
+            <option value="semi_slick">Semi-slick track tire</option>
+            <option value="drag">Drag radial tire</option>
+            <option value="offroad">All-terrain / off-road tire</option>
+            <option value="hover_pad">Hover pad / no-contact tire</option>
+          </select>
+        </label>
+
+        <label class="label advancedOnly">Tire size: <span id="tireSizeOut">20 in</span>
+          <input id="tireSize" type="range" min="13" max="24" step="1" value="20"/>
+        </label>
+
+        <label class="label advancedOnly">Mâm xe / rim style
+          <select id="rimStyle" class="premiumSelect">
+            <option value="steel">Steel wheel</option>
+            <option value="alloy" selected>Alloy multi-spoke</option>
+            <option value="forged">Forged lightweight rim</option>
+            <option value="carbon">Carbon aero wheel</option>
+            <option value="beadlock">Beadlock off-road rim</option>
+            <option value="luxury">Luxury chrome rim</option>
+            <option value="hover_ring">Hover ring rim</option>
+          </select>
+        </label>
+
+        <div class="bodyPreview" id="bodyPreview">
+          <span class="bodyPreviewLabel">Body preview</span>
+          <span class="bodyPreviewHint" id="vehicleSummary">RWD · sports coupe · no spoiler</span>
+        </div>
+
+        <div class="vehicleStatGrid advancedOnly">
+          <div class="vehicleStat"><small>Grip</small><b id="vehicleGripOut">1.00×</b></div>
+          <div class="vehicleStat"><small>Mass</small><b id="vehicleMassOut">1850 kg</b></div>
+          <div class="vehicleStat"><small>Drag</small><b id="vehicleDragOut">1.00×</b></div>
+          <div class="vehicleStat"><small>Downforce</small><b id="vehicleDownforceOut">1.00×</b></div>
+        </div>
+      </div>
+    </div>
+
+    <div class="section">
+      <button class="head" data-section="controls"><span>Controls</span><b>⌄</b></button>
+      <div class="body" id="controlsSection">
+        <div class="shortcutRow advancedOnly">
+          <button class="shortcut" id="shortcutAuto">Auto · A</button>
+          <button class="shortcut" id="shortcutManual">Manual · M</button>
+          <button class="shortcut" id="shortcutDown">− Gear · [</button>
+          <button class="shortcut" id="shortcutUp">+ Gear · ]</button>
+        </div>
+        <button class="btn start" id="startBtn">START ENGINE</button>
+
+        <label class="label">Throttle: <span id="throttleOut">0%</span>
+          <input id="throttleSlider" type="range" min="0" max="100" value="0"/>
+        </label>
+
+        <div class="card premiumBox hide" id="aircraftControls">
+          <small>Aircraft flight physics <span class="goldTag">Plane</span></small>
+          <p class="comboHint">Plane engines use thrust, air drag, and airspeed instead of car gearing. Use throttle for thrust and the airspeed command to request a flight speed.</p>
+          <label class="label">Aircraft throttle: <span id="aircraftThrottleOut">0%</span>
+            <input id="aircraftThrottleSlider" type="range" min="0" max="100" value="0"/>
+          </label>
+          <label class="label">Airspeed command: <span id="aircraftSpeedOut">0 km/h</span>
+            <input id="aircraftSpeedSlider" type="range" min="0" max="1200" step="10" value="0"/>
+          </label>
+        </div>
+
+        <div class="pedals">
+          <button class="pedal" id="clutch">CLUTCH</button>
+          <button class="pedal" id="brake">BRAKE</button>
+          <button class="pedal" id="gas">GAS</button>
+        </div>
+
+        <label class="label advancedOnly">Load / dyno resistance: <span id="loadOut">35%</span>
+          <input id="loadSlider" type="range" min="0" max="100" value="35"/>
+        </label>
+      </div>
+    </div>
+
+
+    <div class="section">
+      <button class="head" data-section="transmission"><span>Transmission</span><b>⌄</b></button>
+      <div class="body" id="transmissionSection">
+        <div class="row">
+          <button class="option active" id="autoModeBtn">Automatic</button>
+          <button class="option" id="manualModeBtn">Manual</button>
+        </div>
+        <div class="row">
+          <button class="option" id="gearDownBtn">Shift down</button>
+          <button class="option" id="gearUpBtn">Shift up</button>
+        </div>
+        <label class="label">Transmission type
+          <select id="transmissionType">
+            <option value="dct">Dual-clutch</option>
+            <option value="single">Single-clutch automated</option>
+            <option value="cvt">CVT</option>
+          </select>
+        </label>
+        <label class="label">Number of gears: <span id="gearCountOut">7</span>
+          <input id="gearCount" type="range" min="1" max="10" step="1" value="7"/>
+        </label>
+        <button class="option" id="launchBtn">Launch control off</button>
+        <label class="label">Final drive: <span id="finalDriveOut">3.42:1</span>
+          <input id="finalDrive" type="range" min="2.00" max="5.50" step="0.01" value="3.42"/>
+        </label>
+        <button class="option noteToggle" id="transmissionNoteToggle">
+          <span>Transmission note</span><b id="transmissionNoteArrow">⌄</b>
+        </button>
+        <p id="transmissionNote" class="noteBody">
+          Keyboard shortcuts: Space starts/stops engine, W or ↑ holds gas, S or ↓ holds brake, C holds clutch, A toggles auto, M toggles manual, [ shifts down, ] shifts up, and L toggles launch control.
+          The previous speed wall happened because aerodynamic drag in the simplified drivetrain was too high, so acceleration balanced out far below realistic supercar speeds. This version rescales aero, preserves the gear-limited top speed, and lets capable builds reach 300+ km/h.
+          Automatic mode now uses road-speed RPM projections, so it upshifts before sitting on the rev limiter. Use Number of gears to choose a 1-speed through 10-speed transmission. The simulator rebuilds the gear ratios automatically and the automatic transmission will not shift above your selected top gear. Dual-clutch shifts fastest, single-clutch has a longer torque cut, and CVT holds the engine near its power band instead of stepping through fixed gears. Launch control holds revs while brake + gas are pressed, then boosts launch when brake is released.
+        </p>
+      </div>
+    </div>
+
+    <div class="section">
+      <button class="head" data-section="tuning"><span>Tuning</span><b>⌄</b></button>
+      <div class="body" id="tuningSection">
+        <label class="label" id="fuelWrap">Fuel mix: <span id="fuelOut">1.00 λ</span>
+          <input id="fuel" type="range" min="0.75" max="1.25" step="0.01" value="1.00"/>
+        </label>
+
+        <label class="label" id="timingWrap">Ignition timing: <span id="timingOut">0°</span>
+          <input id="timing" type="range" min="-10" max="10" step="1" value="0"/>
+        </label>
+
+        <label class="label">Rev / spool limit: <span id="limitOut">7000 rpm</span>
+          <input id="revLimit" type="range" min="4500" max="22000" step="100" value="7000"/>
+        </label>
+      </div>
+    </div>
+
+    <div class="section">
+      <button class="head" data-section="sound"><span>Engine sound</span><b>⌄</b></button>
+      <div class="body" id="soundSection">
+        <label class="label">Sound mode
+          <select id="soundMode" class="premiumSelect">
+            <option value="auto">Auto by engine</option>
+            <option value="i4">Inline-4 buzz</option>
+            <option value="v6">V6 growl</option>
+            <option value="v8">V8 rumble</option>
+            <option value="v10">V10 scream</option>
+            <option value="v12">V12 smooth scream</option>
+            <option value="rotary">Rotary brap</option>
+            <option value="diesel">Diesel clatter</option>
+            <option value="turbo">Turbo whistle</option>
+            <option value="supercharger">Supercharger whine</option>
+            <option value="jet">Jet spool</option>
+            <option value="electric">Electric whirr</option>
+          </select>
+        </label>
+        <label class="label">Sound volume: <span id="soundVolumeOut">70%</span>
+          <input id="soundVolume" type="range" min="0" max="100" step="1" value="70"/>
+        </label>
+      </div>
+    </div>
+
+    <div class="section">
+      <button class="head" data-section="saveBuilds"><span>Save builds</span><b>⌄</b></button>
+      <div class="body" id="saveBuildsSection">
+        <label class="label">Build name
+          <input id="buildNameInput" type="text" value="My engine build"/>
+        </label>
+        <button class="option" id="saveBuildBtn">Save current build</button>
+        <div class="saveBuildList" id="savedBuildList"></div>
+      </div>
+    </div>
+
+    <div class="section">
+      <button class="head" data-section="raceTest"><span>Race test mode</span><b>⌄</b></button>
+      <div class="body" id="raceTestSection">
+        <button class="option" id="testZeroHundredBtn">Run 0–100 km/h test</button>
+        <button class="option" id="testQuarterMileBtn">Run quarter mile estimate</button>
+        <button class="option" id="testTopSpeedBtn">Run top speed estimate</button>
+        <button class="option" id="testTrackLapBtn">Run track lap estimate</button>
+        <button class="option" id="testAircraftTakeoffBtn">Run aircraft takeoff test</button>
+        <div class="testResults" id="raceTestResults">
+          <div class="testResultLine"><span>Latest result</span><b>Not tested</b></div>
+        </div>
+      </div>
+    </div>
+
+
+    <div class="section">
+      <button class="head" data-section="dyno"><span>Dyno</span><b>⌄</b></button>
+      <div class="body" id="dynoSection">
+        <button class="option" id="dynoBtn">Run dyno sweep</button>
+        <button class="option" id="coolBtn">Cool engine</button>
+        <label class="label">Dyno graph mode
+          <select id="dynoGraphMode" class="premiumSelect">
+            <option value="powerTorque">Power + torque</option>
+            <option value="boostTemp">Boost + temperature</option>
+            <option value="all">All curves</option>
+          </select>
+        </label>
+        <p id="warning" class="warning"></p>
+      </div>
+    </div>
+
+    <div class="sticky">
+      <button class="reset" id="resetBtn">Reset simulator</button>
+    </div>
+  </aside>
+</main>
+
+<script src="src/app.js"></script>
+
+</body>
+</html>

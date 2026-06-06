@@ -1,0 +1,538 @@
+:root{
+  --bg:#f6f4ef; --panel:#fffefa; --panel2:#f1eee7; --ink:#141414; --muted:#7a746b;
+  --line:#ded7ca; --gold:#b99a55; --gold2:#d8bf7a; --black:#0d0d0f; --cream:#fffaf0;
+  --blue:#6aa5d8; --hot:#c96d3c; --green:#587d55; --red:#a33f3f;
+}
+*{box-sizing:border-box}
+body{
+  margin:0;
+  background:
+    radial-gradient(circle at 18% 0%,rgba(255,255,255,.92),transparent 32%),
+    linear-gradient(135deg,#f8f5ee,#eee7da 62%,#ddd4c4);
+  color:var(--ink);
+  font-family:-apple-system,BlinkMacSystemFont,"Segoe UI",Roboto,Arial,sans-serif;
+}
+button,input,select{font:inherit}
+.top{
+  position:sticky; top:0; z-index:10;
+  border-bottom:1px solid var(--line);
+  background:rgba(255,253,248,.86);
+  backdrop-filter:blur(18px);
+}
+.top .wrap{
+  max-width:1480px; margin:auto; padding:14px 24px;
+  display:flex; justify-content:space-between; align-items:center; gap:16px
+}
+.eyebrow{font-size:10px;letter-spacing:.32em;text-transform:uppercase;color:var(--muted);font-weight:800}
+h1{margin:4px 0 0;font-size:24px;letter-spacing:-.045em;font-weight:720}
+.status{
+  background:var(--black);color:#fff;padding:10px 16px;border-radius:999px;
+  font-weight:800;box-shadow:0 12px 28px rgba(0,0,0,.13)
+}
+.app{max-width:1480px;margin:auto;display:grid;grid-template-columns:minmax(0,1fr) 410px;min-height:calc(100vh - 68px)}
+.stage{
+  position:sticky;top:68px;height:calc(100vh - 68px);border-right:1px solid var(--line);
+  display:grid;grid-template-rows:minmax(360px,1fr) auto;overflow:hidden;background:rgba(255,255,255,.28)
+}
+.canvasWrap{position:relative;min-height:360px;overflow:hidden;touch-action:none;cursor:grab}
+.canvasWrap.dragging{cursor:grabbing}
+canvas{position:absolute;inset:0;width:100%;height:100%;display:block}
+.sceneControls{
+  position:absolute;right:18px;bottom:18px;z-index:5;
+  display:flex;gap:8px;align-items:center;flex-wrap:wrap;justify-content:flex-end;
+  max-width:min(520px,calc(100% - 36px));
+}
+.sceneBtn{
+  border:1px solid rgba(185,154,85,.45);
+  background:rgba(13,13,15,.72);color:#fff;border-radius:999px;
+  padding:9px 12px;font-size:12px;font-weight:900;cursor:pointer;
+  backdrop-filter:blur(14px);box-shadow:0 12px 28px rgba(0,0,0,.18)
+}
+.sceneBtn:hover{border-color:var(--gold2);transform:translateY(-1px)}
+.sceneHint{
+  border:1px solid rgba(255,255,255,.18);
+  background:rgba(255,253,248,.78);color:#4b463e;border-radius:999px;
+  padding:9px 12px;font-size:11px;font-weight:900;letter-spacing:.02em;
+  backdrop-filter:blur(14px)
+}
+.sceneSliderWrap{
+  display:flex;align-items:center;gap:10px;
+  border:1px solid rgba(255,255,255,.18);
+  background:rgba(255,253,248,.82);color:#4b463e;border-radius:999px;
+  padding:8px 12px;backdrop-filter:blur(14px);
+  box-shadow:0 12px 28px rgba(0,0,0,.08)
+}
+.sceneSliderWrap label{font-size:11px;font-weight:900;letter-spacing:.06em;text-transform:uppercase;white-space:nowrap}
+.sceneSliderWrap input[type=range]{width:150px;accent-color:var(--gold);margin:0}
+.sceneSliderReadout{font-size:11px;font-weight:900;white-space:nowrap}
+.overlay{position:absolute;left:24px;top:24px;display:grid;gap:10px}
+.card{
+  border:1px solid rgba(185,154,85,.22);
+  background:rgba(255,253,248,.72);
+  backdrop-filter:blur(22px);
+  border-radius:24px;
+  padding:14px 16px;
+  box-shadow:0 22px 60px rgba(80,63,30,.12);
+}
+.card small{display:block;color:var(--muted);font-size:10px;letter-spacing:.22em;text-transform:uppercase;font-weight:800}
+.card b{display:block;margin-top:6px;font-size:17px}
+
+.dashboardGauges{
+  display:grid;grid-template-columns:repeat(5,minmax(210px,1fr));gap:12px;
+  border-top:1px solid var(--line);
+  background:rgba(255,253,248,.9);
+  padding:14px 18px 12px;
+  overflow-x:auto;overflow-y:hidden;
+  scrollbar-width:thin;
+  scroll-snap-type:x proximity;
+  -webkit-overflow-scrolling:touch;
+}
+.dashboardGauges::-webkit-scrollbar{height:9px}
+.dashboardGauges::-webkit-scrollbar-track{background:rgba(222,215,202,.55);border-radius:999px}
+.dashboardGauges::-webkit-scrollbar-thumb{background:rgba(185,154,85,.72);border-radius:999px}
+.gaugeCard{
+  border:1px solid rgba(185,154,85,.26);
+  background:linear-gradient(180deg,rgba(255,255,255,.76),rgba(241,238,231,.62));
+  border-radius:20px;padding:12px;display:grid;place-items:center;gap:8px;overflow:visible;
+  min-width:220px;scroll-snap-align:start;
+  box-shadow:0 10px 28px rgba(70,50,20,.06)
+}
+.gaugeDial{
+  --value:0deg;--needle:0deg;--redline-start:220deg;
+  position:relative;width:min(132px,100%);aspect-ratio:1;border-radius:50%;
+  display:grid;place-items:center;overflow:visible;
+  background:linear-gradient(180deg,#efeff3,#d9d9df);
+  border:4px solid #5f5f66;
+  box-shadow:inset 0 0 0 2px rgba(255,255,255,.82),0 14px 30px rgba(0,0,0,.10);
+  transition:background .18s ease,border-color .18s ease,box-shadow .18s ease,filter .18s ease;
+}
+.gaugeDial.redlineActive{
+  background:linear-gradient(180deg,#ff8080,#d82323);
+  border-color:#9b0f0f;
+  box-shadow:inset 0 0 0 2px rgba(255,230,230,.65),0 0 0 2px rgba(201,31,31,.22),0 16px 34px rgba(160,18,18,.24);
+  filter:saturate(1.06);
+}
+.gaugeDial.redlineActive:before{
+  background:
+    radial-gradient(circle at center,rgba(255,240,240,.95) 0 64%,transparent 65%),
+    repeating-conic-gradient(from 225deg,rgba(120,0,0,.78) 0deg 1deg,transparent 1deg 8deg),
+    radial-gradient(circle at center,#fff5f5 0 82%,#f3b8b8 83%,#ffe7e7 100%);
+  box-shadow:inset 0 0 0 1px rgba(120,0,0,.22);
+}
+.gaugeDial.redlineActive .gaugeName,
+.gaugeDial.redlineActive .gaugeText b,
+.gaugeDial.redlineActive .gaugeText small{color:#730b0b}
+.gaugeDial.redlineActive:after{background:linear-gradient(180deg,#5e0000,#8b0000 65%,#420000)}
+.gaugeRedline{
+  position:absolute;inset:9px;border-radius:50%;z-index:2;pointer-events:none;
+  background:
+    conic-gradient(from 225deg,transparent 0deg var(--redline-start),#c91f1f var(--redline-start) 270deg,transparent 270deg 360deg);
+  -webkit-mask:radial-gradient(circle,transparent 0 64%,#000 65% 82%,transparent 83%);
+  mask:radial-gradient(circle,transparent 0 64%,#000 65% 82%,transparent 83%);
+  filter:drop-shadow(0 0 2px rgba(201,31,31,.45));
+}
+.gaugeDial:before{
+  content:"";position:absolute;inset:7px;border-radius:50%;
+  background:
+    radial-gradient(circle at center,#f8f8fb 0 64%,transparent 65%),
+    repeating-conic-gradient(from 225deg,rgba(20,20,20,.78) 0deg 1deg,transparent 1deg 8deg),
+    radial-gradient(circle at center,#ffffff 0 82%,#e4e5eb 83%,#fafafa 100%);
+  box-shadow:inset 0 0 0 1px rgba(13,13,15,.16);
+}
+.gaugeDial:after{
+  content:"";position:absolute;width:4px;height:38%;left:calc(50% - 2px);top:16%;
+  background:linear-gradient(180deg,#111,#111 65%,#444);
+  border-radius:999px;transform-origin:50% 90%;transform:rotate(var(--needle));
+  box-shadow:0 2px 5px rgba(0,0,0,.20);z-index:3;
+}
+.gaugeScale{position:absolute;inset:8px;z-index:1;pointer-events:none}
+.gaugeTick{position:absolute;inset:0;transform:rotate(var(--rot))}
+.gaugeTick:before{content:"";position:absolute;left:calc(50% - 1px);top:2px;width:2px;height:8px;background:rgba(13,13,15,.68);border-radius:999px}
+.gaugeTick.major:before{width:3px;left:calc(50% - 1.5px);height:14px;background:#111}
+.gaugeTick.redline:before{background:#c91f1f;width:3px;left:calc(50% - 1.5px);height:15px}
+.gaugeTickLabel{position:absolute;transform:translate(-50%,-50%);font-size:10px;font-weight:900;color:#111;letter-spacing:-.02em;white-space:nowrap}
+.gaugeName{position:absolute;left:50%;top:64%;transform:translate(-50%,-50%);z-index:4;font-size:10px;font-weight:950;letter-spacing:.12em;text-transform:uppercase;color:#202024;white-space:nowrap}
+.dashboardGauges.gaugeStyleMaybach{
+  background:linear-gradient(135deg,rgba(10,10,12,.96),rgba(38,32,22,.94) 58%,rgba(185,154,85,.22));
+  border-top-color:rgba(216,191,122,.42);
+}
+.dashboardGauges.gaugeStyleMaybach .gaugeCard{
+  background:linear-gradient(180deg,rgba(22,22,24,.92),rgba(8,8,10,.96));
+  border-color:rgba(216,191,122,.58);
+  box-shadow:0 16px 36px rgba(0,0,0,.24),inset 0 0 0 1px rgba(255,232,173,.08);
+}
+.dashboardGauges.gaugeStyleMaybach .gaugeDial{
+  background:radial-gradient(circle at 50% 42%,#252525 0 42%,#090909 74%,#000 100%);
+  border-color:#d8bf7a;
+  box-shadow:inset 0 0 0 2px rgba(255,244,191,.28),0 0 28px rgba(216,191,122,.22);
+}
+.dashboardGauges.gaugeStyleMaybach .gaugeDial:before{
+  background:
+    radial-gradient(circle at center,#111 0 64%,transparent 65%),
+    repeating-conic-gradient(from 225deg,rgba(216,191,122,.92) 0deg 1deg,transparent 1deg 8deg),
+    radial-gradient(circle at center,#050505 0 82%,#d8bf7a 83%,#090909 100%);
+  box-shadow:inset 0 0 0 1px rgba(216,191,122,.38);
+}
+.dashboardGauges.gaugeStyleMaybach .gaugeDial:after{background:linear-gradient(180deg,#f8e7a5,#d8bf7a 68%,#6b5524);box-shadow:0 0 10px rgba(216,191,122,.55)}
+.dashboardGauges.gaugeStyleMaybach .gaugeName,
+.dashboardGauges.gaugeStyleMaybach .gaugeText b,
+.dashboardGauges.gaugeStyleMaybach .gaugeText small,
+.dashboardGauges.gaugeStyleMaybach .gaugeCaption,
+.dashboardGauges.gaugeStyleMaybach .digitalGauge small,
+.dashboardGauges.gaugeStyleMaybach .digitalGauge b,
+.dashboardGauges.gaugeStyleMaybach .digitalGauge span{color:#f8ecd0}
+.dashboardGauges.gaugeStyleMaybach .gaugeTick:before{background:#d8bf7a}
+.dashboardGauges.gaugeStyleMaybach .gaugeTick.major:before{background:#fff4bf}
+.dashboardGauges.gaugeStyleMaybach .digitalGauge{
+  background:linear-gradient(180deg,rgba(18,18,20,.94),rgba(6,6,8,.98));
+  border-color:rgba(216,191,122,.48);
+  box-shadow:inset 0 0 0 1px rgba(255,244,191,.12),0 0 26px rgba(216,191,122,.16);
+}
+.dashboardGauges.gaugeStyleMaybach .gaugeRedline{filter:drop-shadow(0 0 4px rgba(255,50,50,.78))}
+.dashboardGauges.gaugeStyleLuxuryWhite .gaugeCard{
+  background:linear-gradient(180deg,rgba(255,255,255,.94),rgba(241,236,224,.88));
+  border-color:rgba(185,154,85,.38);
+}
+.dashboardGauges.gaugeStyleLuxuryWhite .gaugeDial{
+  background:linear-gradient(180deg,#fff,#e9e3d6);
+  border-color:#b99a55;
+  box-shadow:inset 0 0 0 2px rgba(255,255,255,.9),0 12px 28px rgba(185,154,85,.14);
+}
+.dashboardGauges.gaugeStyleLuxuryWhite .gaugeDial:before{
+  background:
+    radial-gradient(circle at center,#fffaf0 0 64%,transparent 65%),
+    repeating-conic-gradient(from 225deg,rgba(86,64,23,.62) 0deg 1deg,transparent 1deg 8deg),
+    radial-gradient(circle at center,#fff 0 82%,#d8bf7a 83%,#fff8e7 100%);
+}
+.dashboardGauges.gaugeStyleLfa{
+  background:linear-gradient(135deg,rgba(3,4,8,.99),rgba(1,2,5,.99));
+  border-top-color:rgba(255,255,255,.10);
+}
+.dashboardGauges.gaugeStyleLfa .gaugeCard{
+  background:linear-gradient(180deg,rgba(8,8,12,.98),rgba(2,2,5,.98));
+  border-color:rgba(255,255,255,.08);
+  box-shadow:0 20px 34px rgba(0,0,0,.28),inset 0 0 0 1px rgba(255,255,255,.02);
+}
+.dashboardGauges.gaugeStyleLfa .gaugeDial{
+  width:min(128px,100%);
+  background:radial-gradient(circle at center,#080a10 0 62%,#020305 63% 100%);
+  border:0;
+  box-shadow:inset 0 0 0 1px rgba(255,255,255,.05),0 0 22px rgba(0,0,0,.38);
+}
+.dashboardGauges.gaugeStyleLfa .gaugeDial:before{
+  background:
+    radial-gradient(circle at center,
+      #000 0 61%,
+      #f7f8fb 62% 76%,
+      rgba(255,255,255,.12) 77% 79%,
+      transparent 80%);
+  box-shadow:none;
+}
+.dashboardGauges.gaugeStyleLfa .gaugeDial:after{
+  width:5px;height:39%;border-radius:999px;
+  background:linear-gradient(180deg,#ffffff,#eef6ff 52%,#c8d8ef 100%);
+  box-shadow:0 0 8px rgba(255,255,255,.35);
+  transform-origin:50% 90%;
+}
+.dashboardGauges.gaugeStyleLfa .gaugeRedline{
+  background:conic-gradient(from 225deg,transparent 0 var(--redline-start),rgba(255,96,44,.98) var(--redline-start) 336deg,transparent 336deg 360deg);
+  filter:none;
+}
+.dashboardGauges.gaugeStyleLfa .gaugeTick:before{
+  background:#ffffff;
+  width:3px;
+  height:12px;
+  border-radius:4px;
+  box-shadow:0 0 2px rgba(0,0,0,.35);
+}
+.dashboardGauges.gaugeStyleLfa .gaugeTick.major:before{
+  background:#ffffff;
+  width:5px;
+  height:18px;
+  border-radius:5px;
+  box-shadow:0 0 2px rgba(0,0,0,.35);
+}
+.dashboardGauges.gaugeStyleLfa .gaugeTickLabel{
+  color:#ffffff;
+  font-size:10px;
+  font-weight:1000;
+  text-shadow:0 2px 6px rgba(0,0,0,.75);
+}
+.dashboardGauges.gaugeStyleLfa #rpmGaugeScale .gaugeTickLabel{
+  font-size:10px;
+}
+.dashboardGauges.gaugeStyleLfa .gaugeText{
+  margin-top:22px;
+}
+.dashboardGauges.gaugeStyleLfa .gaugeText b{
+  color:#ffffff;
+  font-size:22px;
+  letter-spacing:-.04em;
+  text-shadow:0 0 8px rgba(255,255,255,.10);
+}
+.dashboardGauges.gaugeStyleLfa .gaugeText small{
+  color:#ffffff;
+  font-size:9px;
+}
+.dashboardGauges.gaugeStyleLfa .gaugeName,
+.dashboardGauges.gaugeStyleLfa .gaugeCaption{
+  color:#dbe8ff;
+  letter-spacing:.16em;
+}
+.dashboardGauges.gaugeStyleLfa .gaugeName{
+  top:66%;
+  font-size:9px;
+}
+.dashboardGauges.gaugeStyleLfa .gaugeCaption{
+  font-size:10px;
+}
+.dashboardGauges.gaugeStyleLfa .digitalGauge{
+  background:
+    linear-gradient(180deg,rgba(10,12,18,.98),rgba(2,4,9,.98)),
+    radial-gradient(circle at top,rgba(255,255,255,.04),transparent 55%);
+  border-color:rgba(255,255,255,.14);
+  box-shadow:inset 0 0 0 1px rgba(160,190,255,.05),0 0 24px rgba(0,0,0,.30);
+}
+.dashboardGauges.gaugeStyleLfa .digitalGauge small,
+.dashboardGauges.gaugeStyleLfa .digitalGauge span{
+  color:#d7e3ff;
+}
+.dashboardGauges.gaugeStyleLfa .digitalGauge b{
+  color:#ffffff;
+}
+
+/* LFA redline behavior: the full tachometer face and all text light up red,
+   but the needle stays white. */
+.dashboardGauges.gaugeStyleLfa #rpmGauge.redlineActive{
+  background:radial-gradient(circle at center,#591010 0 62%,#280708 63% 100%);
+  box-shadow:
+    inset 0 0 0 1px rgba(255,255,255,.06),
+    inset 0 0 34px rgba(255,72,40,.42),
+    0 0 26px rgba(255,72,40,.35);
+}
+.dashboardGauges.gaugeStyleLfa #rpmGauge.redlineActive:before{
+  background:
+    radial-gradient(circle at center,
+      #5f1111 0 61%,
+      #ff6835 62% 76%,
+      rgba(255,175,130,.30) 77% 79%,
+      transparent 80%);
+}
+.dashboardGauges.gaugeStyleLfa #rpmGauge.redlineActive .gaugeTick:before{
+  background:#ffd5c8;
+}
+.dashboardGauges.gaugeStyleLfa #rpmGauge.redlineActive .gaugeTick.major:before{
+  background:#fff0ea;
+}
+.dashboardGauges.gaugeStyleLfa #rpmGauge.redlineActive .gaugeTickLabel,
+.dashboardGauges.gaugeStyleLfa #rpmGauge.redlineActive .gaugeText b,
+.dashboardGauges.gaugeStyleLfa #rpmGauge.redlineActive .gaugeText small,
+.dashboardGauges.gaugeStyleLfa #rpmGauge.redlineActive .gaugeName{
+  color:#fff4ee;
+  text-shadow:0 0 10px rgba(255,72,40,.45);
+}
+.dashboardGauges.gaugeStyleDigitalBlue .gaugeCard{
+  background:linear-gradient(180deg,rgba(8,17,32,.96),rgba(3,7,18,.98));
+  border-color:rgba(96,165,250,.44);
+}
+.dashboardGauges.gaugeStyleDigitalBlue .gaugeDial{
+  background:radial-gradient(circle at 50% 45%,#0b2444 0 42%,#041021 76%,#020617 100%);
+  border-color:#60a5fa;
+}
+.dashboardGauges.gaugeStyleDigitalBlue .gaugeDial:before{
+  background:
+    radial-gradient(circle at center,#06172f 0 64%,transparent 65%),
+    repeating-conic-gradient(from 225deg,rgba(147,197,253,.94) 0deg 1deg,transparent 1deg 8deg),
+    radial-gradient(circle at center,#020617 0 82%,#38bdf8 83%,#0b1220 100%);
+}
+.dashboardGauges.gaugeStyleDigitalBlue .gaugeDial:after{background:linear-gradient(180deg,#bfdbfe,#38bdf8);box-shadow:0 0 10px rgba(56,189,248,.72)}
+.dashboardGauges.gaugeStyleDigitalBlue .gaugeName,
+.dashboardGauges.gaugeStyleDigitalBlue .gaugeText b,
+.dashboardGauges.gaugeStyleDigitalBlue .gaugeText small,
+.dashboardGauges.gaugeStyleDigitalBlue .gaugeCaption,
+.dashboardGauges.gaugeStyleDigitalBlue .digitalGauge small,
+.dashboardGauges.gaugeStyleDigitalBlue .digitalGauge b,
+.dashboardGauges.gaugeStyleDigitalBlue .digitalGauge span{color:#dbeafe}
+.dashboardGauges.gaugeStyleDigitalBlue .digitalGauge{background:linear-gradient(180deg,#071a33,#020617);border-color:rgba(96,165,250,.44)}
+.gaugeText{position:relative;z-index:4;text-align:center;margin-top:30px}
+.gaugeText b{display:block;font-size:19px;letter-spacing:-.05em;line-height:1;color:#111}.gaugeText small{display:block;margin-top:4px;color:#555;font-size:9px;letter-spacing:.16em;text-transform:uppercase;font-weight:950}
+.gaugeCaption{text-align:center;color:#4b463e;font-size:11px;font-weight:900;letter-spacing:.12em;text-transform:uppercase}
+.digitalGauge{
+  width:min(132px,100%);aspect-ratio:1;border-radius:20px;
+  border:1px solid rgba(13,13,15,.12);
+  background:linear-gradient(180deg,rgba(255,255,255,.96),rgba(244,241,233,.92));
+  box-shadow:inset 0 0 0 1px rgba(255,255,255,.72),0 12px 28px rgba(0,0,0,.08);
+  display:grid;place-items:center;text-align:center;padding:12px;
+}
+.digitalGauge small{display:block;color:#4b463e;font-size:10px;letter-spacing:.14em;text-transform:uppercase;font-weight:950;line-height:1.25}
+.digitalGauge b{display:block;margin-top:10px;font-size:38px;letter-spacing:-.05em;color:#111;line-height:1}
+.digitalGauge span{display:block;margin-top:6px;color:var(--muted);font-size:12px;letter-spacing:.12em;text-transform:uppercase;font-weight:900}
+.digitalGauge #gearHpText{margin-top:8px;color:#111;font-size:13px;letter-spacing:.08em}
+.altDigitalGauge{display:none}
+.auxDigitalGauge{display:none}
+.dashboardGauges.digitalMode .gaugeCard.modeConvertible:not(.auxDigital) .gaugeDial{display:none}
+.dashboardGauges.digitalMode .gaugeCard.modeConvertible:not(.auxDigital) .altDigitalGauge{display:grid}
+.gaugeCard.auxDigital .gaugeDial{display:none}
+.gaugeCard.auxDigital .auxDigitalGauge{display:grid}
+@media(max-width:980px){.dashboardGauges{grid-template-columns:repeat(5,minmax(200px,1fr));padding:12px}.gaugeCard{min-width:200px}.gaugeDial,.digitalGauge{width:112px}.gaugeTickLabel{font-size:9px}.digitalGauge b{font-size:28px}}
+.stage.mobileMode .dashboardGauges{display:none}
+
+.readouts{
+  display:none;
+  grid-template-columns:repeat(7,1fr);
+  border-top:1px solid var(--line);
+  background:rgba(255,253,248,.88);
+}
+.readout{padding:16px 18px;border-right:1px solid var(--line)}
+.readout:last-child{border-right:0}
+.readout small{display:block;color:var(--muted);font-size:10px;letter-spacing:.18em;text-transform:uppercase;font-weight:900}
+.readout b{display:block;margin-top:7px;font-size:18px}
+.panel{
+  height:calc(100vh - 68px);overflow-y:auto;background:rgba(255,253,248,.92);
+  padding:0 24px 24px
+}
+.section{border-bottom:1px solid var(--line)}
+.head{
+  width:100%;border:0;background:transparent;color:var(--ink);padding:20px 0;
+  display:flex;align-items:center;justify-content:space-between;cursor:pointer
+}
+.head span{font-size:11px;letter-spacing:.22em;text-transform:uppercase;font-weight:900}
+.body{display:grid;gap:12px;padding:0 0 20px}
+.row{display:grid;grid-template-columns:1fr 1fr;gap:10px}
+.option,.btn{
+  width:100%;border:1px solid var(--line);background:rgba(255,255,255,.64);color:var(--ink);
+  border-radius:16px;padding:12px 14px;text-align:left;font-weight:760;cursor:pointer;
+  transition:.16s;box-shadow:0 8px 22px rgba(70,50,20,.04)
+}
+.option:hover,.btn:hover{border-color:var(--gold);transform:translateY(-1px)}
+.shortcutRow{display:grid;grid-template-columns:repeat(4,1fr);gap:8px}
+.shortcut{border:1px solid var(--line);background:rgba(255,255,255,.68);border-radius:999px;padding:10px 12px;font-weight:850;cursor:pointer;text-align:center;color:var(--ink)}
+.shortcut:hover{border-color:var(--gold);transform:translateY(-1px)}
+.noteToggle{display:flex;align-items:center;justify-content:space-between;gap:10px}
+.noteBody{display:none;margin:0;color:var(--muted);font-size:13px;line-height:1.55;background:rgba(255,255,255,.55);border:1px solid var(--line);border-radius:14px;padding:12px}
+.noteBody.open{display:block}
+.option.active,.btn.active{
+  background:var(--black);color:#fff;border-color:var(--black);
+  box-shadow:0 16px 35px rgba(0,0,0,.16)
+}
+.start{height:58px;border-radius:999px;text-align:center;display:flex;align-items:center;justify-content:center;letter-spacing:.08em}
+.start.on{background:#486946;color:white;border-color:#486946}
+.label{display:grid;gap:8px;font-size:13px;font-weight:800;color:#4b463e}
+input[type=range]{width:100%;accent-color:var(--gold)}
+select{
+  width:100%;height:46px;border:1px solid var(--line);background:rgba(255,255,255,.78);color:var(--ink);
+  border-radius:16px;padding:8px 12px;font-weight:760
+}
+.pedals{display:grid;grid-template-columns:repeat(3,1fr);gap:8px}
+.pedal{
+  height:78px;border:1px solid var(--line);border-radius:16px;background:rgba(255,255,255,.6);
+  color:var(--ink);font-size:12px;font-weight:900;cursor:pointer
+}
+.pedal.down{transform:translateY(8px);background:var(--gold);color:#fff}
+.warning{color:#8b2f2f;font-weight:850;min-height:20px}
+.sticky{
+  position:sticky;bottom:0;margin:0 -24px -24px;padding:16px 24px;
+  background:rgba(255,253,248,.96);border-top:1px solid var(--line);backdrop-filter:blur(18px)
+}
+.reset{width:100%;border:0;background:var(--black);color:#fff;padding:14px;border-radius:16px;font-weight:900;cursor:pointer}
+.hide{display:none !important}
+.app.panelMinimized{grid-template-columns:minmax(0,1fr)}
+.app.panelMinimized .stage{width:100%;max-width:none;border-right:0}
+.app.panelMinimized .panel{display:none;width:0;padding:0;overflow:hidden;opacity:0;border-left:0;border-right:0}
+.app.panelMinimized .restorePanelBtn{display:inline-flex !important;pointer-events:auto}
+.stage.mobileMode .overlay,.stage.mobileMode .readouts{display:none}
+.restorePanelBtn{position:absolute;left:18px;top:18px;z-index:50;pointer-events:auto;touch-action:manipulation}
+.sceneDrivePad{position:absolute;left:18px;right:18px;bottom:74px;z-index:6;display:grid;gap:10px;max-width:620px}
+.scenePadRow{display:grid;gap:10px}
+.scenePadRow.pedals{grid-template-columns:repeat(3,minmax(0,1fr))}
+.scenePadRow.shifters{grid-template-columns:repeat(3,minmax(0,1fr))}
+.scenePadButton{border:1px solid rgba(185,154,85,.45);background:rgba(13,13,15,.76);color:#fff;border-radius:18px;padding:14px 14px;font-weight:900;cursor:pointer;backdrop-filter:blur(16px);box-shadow:0 18px 42px rgba(0,0,0,.20)}
+.scenePadButton:hover{border-color:var(--gold2);transform:translateY(-1px)}
+.scenePadButton.down,.scenePadButton.active{background:linear-gradient(135deg,var(--gold),var(--gold2));color:#111;border-color:var(--gold2)}
+.scenePadLabel{font-size:11px;letter-spacing:.18em;text-transform:uppercase;color:#f5e4a8;font-weight:950;margin-bottom:2px;padding-left:4px}
+.pedal,.scenePadButton,.sceneBtn,.option,.btn,.shortcut,.miniBtn{user-select:none;-webkit-user-select:none;touch-action:manipulation}
+@media(max-width:980px){.sceneDrivePad{left:12px;right:12px;bottom:84px;max-width:none}.scenePadRow.pedals,.scenePadRow.shifters{grid-template-columns:repeat(3,minmax(0,1fr))}}
+@media(max-width:980px){
+  .app{grid-template-columns:1fr}.stage{position:relative;top:0;height:820px;border-right:0}.panel{height:auto}
+  .readouts{grid-template-columns:repeat(2,1fr)}
+}
+
+.premiumBox{border:1px solid rgba(185,154,85,.55);background:linear-gradient(135deg,rgba(255,252,242,.9),rgba(216,191,122,.13));box-shadow:0 14px 34px rgba(185,154,85,.14)}
+.goldTag{display:inline-block;margin-left:6px;padding:2px 7px;border-radius:999px;background:linear-gradient(135deg,var(--gold),var(--gold2));color:#111;font-size:9px;letter-spacing:.14em;font-weight:950;text-transform:uppercase}
+select.premiumSelect,.option.premiumFeature{border-color:rgba(185,154,85,.62);box-shadow:inset 0 0 0 1px rgba(216,191,122,.15),0 10px 24px rgba(185,154,85,.09)}
+.comboHint{font-size:12px;color:var(--muted);line-height:1.45;margin-top:-4px}
+.vehicleStatGrid{display:grid;grid-template-columns:repeat(2,1fr);gap:8px}
+.vehicleStat{border:1px solid rgba(185,154,85,.22);background:rgba(255,255,255,.58);border-radius:14px;padding:10px 12px}
+.vehicleStat small{display:block;font-size:9px;letter-spacing:.14em;text-transform:uppercase;color:var(--muted);font-weight:900}.vehicleStat b{display:block;margin-top:4px;font-size:13px}
+.buildSummary{display:grid;gap:10px}
+.buildSummaryGrid{display:grid;grid-template-columns:repeat(2,1fr);gap:8px}
+.buildMetric{border:1px solid rgba(185,154,85,.24);background:rgba(255,255,255,.62);border-radius:14px;padding:10px 12px}
+.buildMetric small{display:block;font-size:9px;letter-spacing:.14em;text-transform:uppercase;color:var(--muted);font-weight:950}
+.buildMetric b{display:block;margin-top:4px;font-size:14px;letter-spacing:-.02em}
+.buildMetric.wide{grid-column:1 / -1}
+.buildSummary .riskText{color:#7f1d1d}.buildSummary .bestText{color:#395239}
+.saveBuildList{display:grid;gap:8px;max-height:150px;overflow:auto}
+.savedBuildItem{border:1px solid rgba(185,154,85,.25);background:rgba(255,255,255,.62);border-radius:12px;padding:9px 10px;display:grid;grid-template-columns:1fr auto;gap:8px;align-items:center}
+.savedBuildItem b{font-size:12px}.savedBuildItem small{display:block;color:var(--muted);font-size:10px}
+.savedBuildItem button{border:1px solid var(--line);background:#fff;border-radius:10px;padding:7px 9px;font-weight:900;cursor:pointer}
+.testResults{display:grid;gap:6px}
+.testResultLine{display:flex;justify-content:space-between;border-bottom:1px solid rgba(185,154,85,.16);padding:5px 0;font-size:12px}
+.bodyPreview{height:104px;border:1px solid rgba(185,154,85,.35);border-radius:18px;background:linear-gradient(180deg,rgba(13,13,15,.92),rgba(26,31,42,.92));position:relative;overflow:hidden;box-shadow:inset 0 0 0 1px rgba(255,255,255,.04)}
+.bodyPreview svg{width:100%;height:100%;display:block}.bodyPreviewLabel{position:absolute;left:12px;top:10px;color:#f8ecd0;font-size:10px;letter-spacing:.16em;text-transform:uppercase;font-weight:950}.bodyPreviewHint{position:absolute;right:12px;bottom:10px;color:#bfdbfe;font-size:10px;font-weight:800}
+.panelTools{display:grid;grid-template-columns:repeat(auto-fit,minmax(140px,1fr));gap:8px;padding:18px 0}
+.miniBtn{width:100%;border:1px solid var(--line);background:rgba(255,255,255,.7);color:var(--ink);border-radius:14px;padding:11px 12px;font-weight:850;cursor:pointer;box-shadow:0 8px 22px rgba(70,50,20,.04)}
+.miniBtn:hover{border-color:var(--gold);transform:translateY(-1px)}
+.miniBtn.active{background:var(--black);color:#fff;border-color:var(--black)}
+.overlayHeader{display:flex;align-items:center;gap:8px}
+.overlayToggle{border:1px solid rgba(185,154,85,.38);background:rgba(255,253,248,.74);color:var(--ink);border-radius:999px;padding:8px 12px;font-size:11px;font-weight:900;cursor:pointer;backdrop-filter:blur(14px)}
+.overlayCards{display:grid;gap:10px}
+.overlay.collapsed .overlayCards{display:none}
+.selectInfoRow{display:flex;align-items:flex-start;gap:8px;margin-top:6px}
+.infoBtn{border:1px solid rgba(185,154,85,.45);background:rgba(255,253,248,.86);color:var(--ink);border-radius:999px;width:24px;height:24px;display:inline-flex;align-items:center;justify-content:center;font-size:12px;font-weight:950;cursor:pointer;flex:0 0 auto}
+.infoBtn:hover{border-color:var(--gold);transform:translateY(-1px)}
+.infoBubble{display:none;flex:1;border:1px solid var(--line);background:rgba(255,255,255,.75);padding:8px 10px;border-radius:12px;color:var(--muted);font-size:12px;line-height:1.45}
+.infoBubble.open{display:block}
+.welcomeScreen{position:fixed;inset:0;z-index:40;background:rgba(8,10,14,.42);backdrop-filter:blur(10px);display:grid;place-items:center;padding:20px}
+.welcomeScreen.hide{display:none}
+.letterWrap{position:relative;max-width:680px;width:min(92vw,680px);animation:letterFloat .7s ease}
+@keyframes letterFloat{from{opacity:0;transform:translateY(18px) scale(.98)}to{opacity:1;transform:translateY(0) scale(1)}}
+.letterSeal{position:absolute;top:-18px;right:18px;width:54px;height:54px;border-radius:50%;display:grid;place-items:center;background:linear-gradient(135deg,var(--gold),var(--gold2));color:#111;font-weight:1000;box-shadow:0 14px 30px rgba(185,154,85,.28)}
+.letterCard{border:1px solid rgba(185,154,85,.36);background:linear-gradient(180deg,rgba(255,252,244,.98),rgba(248,241,224,.98));border-radius:28px;padding:28px 24px 22px;box-shadow:0 28px 80px rgba(0,0,0,.18)}
+.letterTitle{margin:10px 0 6px;font-size:34px;letter-spacing:.08em}
+.letterBody{min-height:88px;color:#574f43;line-height:1.7;font-size:15px;white-space:pre-wrap}
+.welcomeActions{display:flex;gap:10px;flex-wrap:wrap;margin-top:16px}
+.modeChoice{display:grid;grid-template-columns:1fr 1fr;gap:10px;margin-top:16px}
+.modeChoice #welcomeStartSim{grid-column:1 / -1;justify-content:center;text-align:center}
+.modeChoice #welcomeEco{grid-column:1 / -1}
+.beginnerGuide{display:none}
+.app.beginnerMode .beginnerGuide{display:block}
+.app.beginnerMode .advancedOnly,
+.app.beginnerMode .section.advancedSection{display:none !important}
+.app.beginnerMode .panelTools .advancedOnly{display:none !important}
+.app.beginnerMode .panel{padding-top:12px}
+.app.beginnerMode .body{gap:14px}
+.app.beginnerMode .shortcutRow{grid-template-columns:1fr 1fr}
+.app.beginnerMode .pedals{grid-template-columns:1fr 1fr}
+.app.beginnerMode #clutch{display:none}
+.app.beginnerMode .overlayCards .card:nth-child(4){display:none}
+.ghostNote{font-size:11px;color:var(--muted);margin-top:10px}
+.ecoPill{display:inline-flex;align-items:center;gap:6px;border:1px solid rgba(88,125,85,.35);background:rgba(88,125,85,.11);padding:7px 10px;border-radius:999px;color:#395239;font-size:11px;font-weight:900;text-transform:uppercase;letter-spacing:.08em}
+button:disabled{opacity:.56;cursor:not-allowed;transform:none !important}
+.matchToast{position:absolute;left:50%;top:16px;transform:translateX(-50%) translateY(-18px);z-index:8;max-width:min(680px,calc(100% - 32px));border:1px solid rgba(216,191,122,.75);background:linear-gradient(135deg,rgba(18,17,15,.92),rgba(79,62,25,.9));color:#fff;border-radius:22px;padding:14px 18px;box-shadow:0 22px 60px rgba(0,0,0,.25);opacity:0;pointer-events:none;transition:.28s;backdrop-filter:blur(16px)}
+.matchToast.show{opacity:1;transform:translateX(-50%) translateY(0)}
+.matchToast small{display:block;color:#f5e4a8;font-size:10px;letter-spacing:.18em;text-transform:uppercase;font-weight:950;margin-bottom:4px}
+.matchToast b{font-size:18px}
+.garageGrid{display:grid;grid-template-columns:repeat(2,minmax(0,1fr));gap:10px}
+.garageCard{border:1px solid rgba(185,154,85,.38);border-radius:18px;overflow:hidden;background:rgba(255,255,255,.66);box-shadow:0 10px 28px rgba(70,50,20,.06)}
+.garageImage{height:82px;background:linear-gradient(135deg,#111821,#223044);display:grid;place-items:center;position:relative;overflow:hidden}
+.garageImage svg{width:100%;height:100%}
+.garageBody{padding:10px 11px;display:grid;gap:4px}
+.garageBody b{font-size:12px;line-height:1.25}.garageBody small{font-size:10px;color:var(--muted);line-height:1.35}.garageTag{display:inline-block;width:max-content;border-radius:999px;background:rgba(185,154,85,.17);color:#6b5524;padding:3px 7px;font-size:9px;font-weight:950;text-transform:uppercase;letter-spacing:.08em}
+.matchCard{border-color:rgba(216,191,122,.72);background:linear-gradient(135deg,rgba(255,252,242,.96),rgba(216,191,122,.18))}
+.discoveredCard{border-color:rgba(88,125,85,.36);background:linear-gradient(135deg,rgba(255,252,242,.96),rgba(88,125,85,.13))}
+.discoveredList{display:grid;gap:8px;margin-top:10px}
+.discoveredItem{border:1px solid rgba(88,125,85,.28);background:rgba(255,255,255,.66);border-radius:14px;padding:10px 12px;display:grid;gap:3px;cursor:pointer;text-align:left;color:var(--ink);width:100%}
+.discoveredItem:hover{border-color:var(--gold);transform:translateY(-1px);box-shadow:0 10px 24px rgba(70,50,20,.08)}
+.discoveredItem.active{border-color:rgba(216,191,122,.86);background:linear-gradient(135deg,rgba(255,252,242,.98),rgba(216,191,122,.20))}
+.discoveredItem b{font-size:12px;line-height:1.25}.discoveredItem small{font-size:10px;color:var(--muted);line-height:1.35}.discoveredEmpty{color:var(--muted);font-size:12px;line-height:1.45;margin:8px 0 0}.discoveredMeta{display:flex;justify-content:space-between;gap:10px;align-items:center;flex-wrap:wrap}.discoveredPill{display:inline-block;border-radius:999px;background:rgba(88,125,85,.15);color:#395239;padding:4px 8px;font-size:9px;font-weight:950;text-transform:uppercase;letter-spacing:.08em}
+@media(max-width:980px){.panelTools{grid-template-columns:1fr}.welcomeActions{flex-direction:column}.garageGrid{grid-template-columns:1fr}}

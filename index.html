@@ -546,10 +546,25 @@
           <button class="option active" id="autoModeBtn">Automatic</button>
           <button class="option" id="manualModeBtn">Manual</button>
         </div>
+        <label class="label">Gear selector
+          <select id="gearSelectorSelect">
+            <option value="P">P - Park</option>
+            <option value="R">R - Reverse</option>
+            <option value="N">N - Neutral</option>
+            <option value="D">D - Drive / forward gears</option>
+          </select>
+        </label>
+        <div class="row gearSelectorRow">
+          <button class="option" id="parkBtn">P</button>
+          <button class="option" id="neutralBtn">N</button>
+          <button class="option" id="reverseBtn">R</button>
+          <button class="option" id="driveBtn">D</button>
+        </div>
         <div class="row">
           <button class="option" id="gearDownBtn">Shift down</button>
           <button class="option" id="gearUpBtn">Shift up</button>
         </div>
+        <p class="comboHint" id="shiftStatus">Manual shifts require lift throttle + C clutch.</p>
         <label class="label">Transmission type
           <select id="transmissionType">
             <option value="dct">Dual-clutch</option>
@@ -568,9 +583,9 @@
           <span>Transmission note</span><b id="transmissionNoteArrow">⌄</b>
         </button>
         <p id="transmissionNote" class="noteBody">
-          Keyboard shortcuts: Space starts/stops engine, W or ↑ holds gas, S or ↓ holds brake, C holds clutch, A toggles auto, M toggles manual, [ shifts down, ] shifts up, and L toggles launch control.
+          Keyboard shortcuts: Space starts/stops engine, W or ↑ holds gas, S or ↓ holds brake, C holds clutch, A toggles auto, M toggles manual, [ shifts down, ] shifts up, P requests Park, and L toggles launch control.
           The previous speed wall happened because aerodynamic drag in the simplified drivetrain was too high, so acceleration balanced out far below realistic supercar speeds. This version rescales aero, preserves the gear-limited top speed, and lets capable builds reach 300+ km/h.
-          Automatic mode now uses road-speed RPM projections, so it upshifts before sitting on the rev limiter. Use Number of gears to choose a 1-speed through 10-speed transmission. The simulator rebuilds the gear ratios automatically and the automatic transmission will not shift above your selected top gear. Dual-clutch shifts fastest, single-clutch has a longer torque cut, and CVT holds the engine near its power band instead of stepping through fixed gears. Launch control holds revs while brake + gas are pressed, then boosts launch when brake is released.
+          Automatic mode now uses road-speed RPM projections, so it upshifts before sitting on the rev limiter. Manual mode requires lifting throttle and holding C clutch before shifting. Shift down from 1 to N, then down again from N to R; press P to request Park when stopped. Use Number of gears to choose a 1-speed through 10-speed transmission. The simulator rebuilds the gear ratios automatically and the automatic transmission will not shift above your selected top gear. Dual-clutch shifts fastest, single-clutch has a longer torque cut, and CVT holds the engine near its power band instead of stepping through fixed gears. Launch control holds revs while brake + gas are pressed, then boosts launch when brake is released.
         </p>
       </div>
     </div>

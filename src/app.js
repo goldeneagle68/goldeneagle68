@@ -95,6 +95,9 @@ const state = {
   speed:0,
   aircraftSpeedCommand:0,
   gear:1,
+  gearSelector:"P",
+  shiftBlockedReason:"",
+  lastShiftTime:0,
   gearCount:7,
   transmissionMode:"auto",
   transmissionType:"dct",
@@ -281,7 +284,7 @@ function soundProfile(mode=getEffectiveSoundMode()){
 }
 
 function captureBuildState(){
-  const keys = ["type","units","displacement","compression","extra1","extra2","revLimit","turboAddon","hybridSystem","nuclearFission","secondaryEngine","systemPower","fuelTanks","vehicleDrive","bodyType","spoilerPackage","tireType","tireSize","rimStyle","gearCount","transmissionMode","transmissionType","finalDrive","gaugeStyle","gaugeDisplayMode","engineCover","exhaustManifold","intakePipeOffset","exhaustPipeOffset","pipesVisible","soundMode","soundVolume"];
+  const keys = ["type","units","displacement","compression","extra1","extra2","revLimit","turboAddon","hybridSystem","nuclearFission","secondaryEngine","systemPower","fuelTanks","vehicleDrive","bodyType","spoilerPackage","tireType","tireSize","rimStyle","gear","gearSelector","gearCount","transmissionMode","transmissionType","finalDrive","gaugeStyle","gaugeDisplayMode","engineCover","exhaustManifold","intakePipeOffset","exhaustPipeOffset","pipesVisible","soundMode","soundVolume"];
   const build = {};
   keys.forEach(k => build[k] = state[k]);
   return build;
@@ -1041,12 +1044,73 @@ function resetTransmissionForType(){
   state.gearCount = Math.max(1, Math.min(10, Math.round(state.gearCount || setup.defaultCount || Math.max(1, setup.ratios.length - 1))));
   state.finalDrive = setup.defaultFinal;
   state.gear = transmissionApplies(cfg) ? 1 : 0;
+  state.gearSelector = transmissionApplies(cfg) ? "P" : "N";
+  state.shiftBlockedReason = "";
   state.shiftTimer = 0;
   state.speed = 0;
   state.virtualRatio = setup.ratios[1] || 1;
 }
 
+function normalizeGearSelector(){
+  if(!transmissionApplies(getConfig())) return "N";
+  if(!["P","R","N","D"].includes(state.gearSelector)) state.gearSelector = state.gear > 0 ? "D" : "N";
+  return state.gearSelector;
+}
+
+function gearDisplayLabel(){
+  if(!transmissionApplies(getConfig())) return "—";
+  const selector = normalizeGearSelector();
+  if(state.transmissionType === "cvt") return selector === "D" ? "CVT" : selector;
+  if(selector === "D") return String(Math.max(1, Math.min(getMaxDrivenGear(), state.gear || 1)));
+  return selector;
+}
+
+function setShiftBlocked(reason){
+  state.shiftBlockedReason = reason || "";
+  if(reason) beep(180, .045, "square", .018);
+}
+
+function canManualShift(){
+  if(state.transmissionMode !== "manual") return true;
+  if(getThrottle() > .06){ setShiftBlocked("Lift throttle"); return false; }
+  if(!state.clutch){ setShiftBlocked("Press C clutch"); return false; }
+  return true;
+}
+
+function setSelector(selector, opts={}){
+  if(!transmissionApplies(getConfig())) return false;
+  normalizeGearSelector();
+  const current = state.gearSelector;
+  const speedAbs = Math.abs(state.speed || 0);
+  if(selector === "P" && speedAbs > 3){
+    setShiftBlocked("Stop before Park");
+    return false;
+  }
+  if(selector === "R" && speedAbs > 4){
+    setShiftBlocked("Stop before Reverse");
+    return false;
+  }
+  if(selector === "R" && current !== "N" && !opts.force){
+    setShiftBlocked("Select N first");
+    return false;
+  }
+  state.gearSelector = selector;
+  if(selector === "D" && state.gear < 1) state.gear = 1;
+  if(selector === "P" || selector === "N" || selector === "R") state.gear = selector === "R" ? -1 : 0;
+  state.shiftTimer = selector === current ? state.shiftTimer : (state.transmissionType === "dct" ? .12 : .28);
+  state.lastShiftTime = performance.now ? performance.now() : Date.now();
+  state.shiftBlockedReason = "";
+  beep(selector === "R" ? 260 : selector === "P" ? 220 : 420, .045, "triangle", .025);
+  return true;
+}
+
 function currentGearRatio(){
+  const selector = normalizeGearSelector();
+  if(selector === "P" || selector === "N") return 0;
+  if(selector === "R"){
+    const setup = getGearSetup();
+    return -(setup.ratios[1] || 3.2) * state.finalDrive * .76;
+  }
   if(state.transmissionType === "cvt" && transmissionApplies(getConfig())){
     return state.virtualRatio * state.finalDrive;
   }
@@ -1058,13 +1122,42 @@ function currentGearRatio(){
 function shiftTo(newGear){
   if(state.transmissionType === "cvt") return;
   const setup = getGearSetup();
-  const maxGear = Math.max(0, setup.ratios.length - 1);
-  const target = Math.max(0, Math.min(maxGear, newGear));
+  const maxGear = Math.max(1, setup.ratios.length - 1);
+  const target = Math.max(1, Math.min(maxGear, newGear));
   if(target === state.gear) return;
   const old = state.gear;
   state.gear = target;
+  state.gearSelector = "D";
+  state.shiftBlockedReason = "";
   state.shiftTimer = state.transmissionType === "dct" ? .16 : .48;
+  state.lastShiftTime = performance.now ? performance.now() : Date.now();
   beep(target > old ? 520 : 320, .05, "triangle", .03);
+}
+
+function requestShiftUp(){
+  if(!transmissionApplies(getConfig())) return;
+  normalizeGearSelector();
+  if(state.transmissionMode === "manual" && !canManualShift()) return;
+  if(state.gearSelector === "R"){ setSelector("N", {force:true}); return; }
+  if(state.gearSelector === "N" || state.gearSelector === "P"){ setSelector("D", {force:true}); shiftTo(1); return; }
+  if(state.transmissionType === "cvt") return;
+  shiftTo((state.gear || 1) + 1);
+}
+
+function requestShiftDown(){
+  if(!transmissionApplies(getConfig())) return;
+  normalizeGearSelector();
+  if(state.transmissionMode === "manual" && !canManualShift()) return;
+  if(state.gearSelector === "P"){ setSelector("N", {force:true}); return; }
+  if(state.gearSelector === "N"){ setSelector("R"); return; }
+  if(state.gearSelector === "R"){ return; }
+  if(state.transmissionType === "cvt"){ setSelector("N", {force:true}); return; }
+  if((state.gear || 1) <= 1){ setSelector("N", {force:true}); return; }
+  shiftTo(state.gear - 1);
+}
+
+function requestPark(){
+  setSelector("P", {force:true});
 }
 
 
@@ -1264,11 +1357,12 @@ function estimateGearSpeedKmh(gear, rpm=state.revLimit){
 
 function automaticShift(idle){
   if(state.transmissionMode !== "auto" || state.shiftTimer > 0.04 || state.transmissionType === "cvt") return;
+  if(normalizeGearSelector() !== "D") return;
   const cfg = getConfig();
   const setup = getGearSetup();
   const maxGear = getMaxDrivenGear();
 
-  if(state.gear === 0){ shiftTo(getSafeGearForSpeed()); return; }
+  if(state.gear <= 0){ shiftTo(getSafeGearForSpeed()); return; }
 
   // If speed has already outrun the current gear, jump to the first safe gear instead
   // of waiting one gear at a time on the limiter.
@@ -1328,22 +1422,28 @@ function applyDrivetrain(engineTorque, idle, freeTargetRpm, dt){
   }
 
   const setup = getGearSetup(cfg);
+  const selector = normalizeGearSelector();
+  if(selector === "P"){
+    state.speed += (0 - state.speed) * Math.min(1, dt * 10);
+    if(Math.abs(state.speed) < .25) state.speed = 0;
+  }
   const wheelRadius = cfg.family === "electric" ? .34 : .335;
   const circumference = 2 * Math.PI * wheelRadius;
-  const wheelRpm = state.speed <= 0 ? 0 : ((state.speed * 1000 / 3600) / circumference) * 60;
+  const speedAbs = Math.abs(state.speed || 0);
+  const wheelRpm = speedAbs <= 0 ? 0 : ((speedAbs * 1000 / 3600) / circumference) * 60;
 
   if(state.transmissionType === "cvt"){
     updateCVTRatio(idle, freeTargetRpm, wheelRpm);
-  } else if(state.transmissionMode === "auto") {
+  } else if(state.transmissionMode === "auto" && selector === "D") {
     automaticShift(idle);
   }
 
   if(state.shiftTimer > 0) state.shiftTimer = Math.max(0, state.shiftTimer - dt);
 
   const ratio = currentGearRatio();
-  const coupledRpm = ratio > 0 ? Math.max(idle, wheelRpm * ratio) : idle;
-  const launchHold = state.launchControl && getThrottle() > .85 && state.brake && state.speed < 3;
-  const disconnected = state.clutch || state.gear === 0 || state.shiftTimer > 0.02 || launchHold;
+  const coupledRpm = ratio !== 0 ? Math.max(idle, wheelRpm * Math.abs(ratio)) : idle;
+  const launchHold = selector === "D" && state.launchControl && getThrottle() > .85 && state.brake && speedAbs < 3;
+  const disconnected = state.clutch || selector === "P" || selector === "N" || state.shiftTimer > 0.02 || launchHold;
   const blend = disconnected ? 0 : (state.transmissionType === "cvt" ? .78 : .90);
   const targetRpm = launchHold ? state.revLimit * .58 : disconnected ? freeTargetRpm : freeTargetRpm * (1 - blend) + coupledRpm * blend;
   state.rpm += (targetRpm - state.rpm) * (cfg.family === "electric" ? .14 : .105);
@@ -1351,11 +1451,12 @@ function applyDrivetrain(engineTorque, idle, freeTargetRpm, dt){
   // Realistic gearing: once a fixed gear reaches the rev limiter, acceleration is cut and speed is clamped.
   let limiterCut = 1;
   let maxSpeedForGear = Infinity;
-  if(!disconnected && ratio > 0 && state.transmissionType !== "cvt"){
-    maxSpeedForGear = (state.revLimit / ratio) * circumference * 60 / 1000;
+  if(!disconnected && ratio !== 0 && state.transmissionType !== "cvt"){
+    maxSpeedForGear = (state.revLimit / Math.abs(ratio)) * circumference * 60 / 1000;
+    if(selector === "R") maxSpeedForGear = Math.min(maxSpeedForGear, 38);
     const limiterStart = maxSpeedForGear * .965;
-    if(state.speed > limiterStart){
-      const over = Math.min(1, (state.speed - limiterStart) / Math.max(1, maxSpeedForGear - limiterStart));
+    if(speedAbs > limiterStart){
+      const over = Math.min(1, (speedAbs - limiterStart) / Math.max(1, maxSpeedForGear - limiterStart));
       limiterCut = Math.max(0, 1 - over * 1.15);
       state.rpm = Math.min(state.revLimit * 1.015, Math.max(state.rpm, coupledRpm));
     }
@@ -1367,39 +1468,56 @@ function applyDrivetrain(engineTorque, idle, freeTargetRpm, dt){
   const drivelineEff = disconnected && !launchHold ? 0 : vset.drivelineEff;
   const tractionLimit = (5.4 + Math.min(3.6, state.speed / 90) * (vset.downforce - 1)) * vset.launchGrip;
   const rawWheelTorque = engineTorque * ratio * drivelineEff * shiftCut * launchBoost * limiterCut;
-  const wheelTorque = Math.min(rawWheelTorque, vset.mass * tractionLimit);
+  const wheelTorque = Math.sign(rawWheelTorque || 1) * Math.min(Math.abs(rawWheelTorque), vset.mass * tractionLimit);
 
   const vehicleMass = vset.mass;
-  const topEndAssist = 1 + Math.min(ROAD_PHYSICS.topEndAssistMax - 1, Math.max(0, state.speed - ROAD_PHYSICS.topEndAssistStart) / 170 * (ROAD_PHYSICS.topEndAssistMax - 1));
+  const topEndAssist = 1 + Math.min(ROAD_PHYSICS.topEndAssistMax - 1, Math.max(0, speedAbs - ROAD_PHYSICS.topEndAssistStart) / 170 * (ROAD_PHYSICS.topEndAssistMax - 1));
   const tractive = wheelTorque / vehicleMass * ROAD_PHYSICS.driveForceScale * vset.accelFactor * topEndAssist;
   const rolling = (.014 + state.load / 2600) * (state.vehicleDrive === "4x4" ? 1.12 : 1) * (vset.rollingFactor || 1);
-  const aero = ROAD_PHYSICS.aeroDragKmh2 * vset.drag * state.speed * state.speed;
+  const dragDirection = Math.sign(state.speed || tractive || 1);
+  const aero = ROAD_PHYSICS.aeroDragKmh2 * vset.drag * speedAbs * speedAbs * dragDirection;
+  const rollingDrag = rolling * dragDirection;
   const braking = state.brake && !launchHold ? 9.5 * (1 + Math.min(.35, (vset.downforce - 1) * .20)) : 0;
+  const brakingDrag = braking * dragDirection;
 
-  let accel = tractive - rolling - aero - braking;
-  if(getThrottle() < .02) accel -= .16;
-  if(limiterCut < .15) accel = Math.min(accel, -.25);
-  state.speed = Math.max(0, state.speed + accel * dt * 12);
-  if(Number.isFinite(maxSpeedForGear)) state.speed = Math.min(state.speed, maxSpeedForGear * 1.012);
-  state.speed = Math.min(state.speed, getTheoreticalTopSpeedKmh());
-  if(state.speed < .2 && getThrottle() < .02) state.speed = 0;
+  let accel = tractive - rollingDrag - aero - brakingDrag;
+  if(getThrottle() < .02) accel -= .16 * dragDirection;
+  if(limiterCut < .15) accel = selector === "R" ? Math.max(accel, .25) : Math.min(accel, -.25);
+  state.speed = state.speed + accel * dt * 12;
+  if(Number.isFinite(maxSpeedForGear) && Math.abs(state.speed) > maxSpeedForGear * 1.012){
+    state.speed = Math.sign(state.speed) * maxSpeedForGear * 1.012;
+  }
+  const topSpeed = getTheoreticalTopSpeedKmh();
+  if(Math.abs(state.speed) > topSpeed) state.speed = Math.sign(state.speed) * topSpeed;
+  if(Math.abs(state.speed) < .2 && getThrottle() < .02) state.speed = 0;
 }
 
 function refreshTransmissionControls(){
   const cfg = getConfig();
   const enabled = transmissionApplies(cfg);
+  const selector = enabled ? normalizeGearSelector() : "N";
+  const gearLabel = enabled ? gearDisplayLabel() : "—";
   $("transmissionSection").classList.toggle("hide", !enabled);
-  $("transmissionLabel").textContent = enabled ? `${state.transmissionMode === "auto" ? "A" : "M"}${state.transmissionType === "cvt" ? "CVT" : (state.gear === 0 ? "N" : state.gear)} · ${Math.round(state.speed)} km/h` : "Direct drive";
-  $("gearOut").textContent = enabled ? (state.transmissionType === "cvt" ? "CVT" : (state.gear === 0 ? "N" : state.gear)) : "—";
+  $("transmissionLabel").textContent = enabled ? `${state.transmissionMode === "auto" ? "A" : "M"}${gearLabel} · ${Math.round(state.speed)} km/h` : "Direct drive";
+  $("gearOut").textContent = gearLabel;
   $("speedOut").textContent = `${Math.round(state.speed)} km/h`;
   $("autoModeBtn").classList.toggle("active", state.transmissionMode === "auto");
   $("manualModeBtn").classList.toggle("active", state.transmissionMode === "manual");
+  if($("parkBtn")) $("parkBtn").classList.toggle("active", selector === "P");
+  if($("neutralBtn")) $("neutralBtn").classList.toggle("active", selector === "N");
+  if($("reverseBtn")) $("reverseBtn").classList.toggle("active", selector === "R");
+  if($("driveBtn")) $("driveBtn").classList.toggle("active", selector === "D");
+  if($("gearSelectorSelect") && $("gearSelectorSelect").value !== selector) $("gearSelectorSelect").value = selector;
+  if($("shiftStatus")){
+    const manualHint = state.transmissionMode === "manual" ? "Manual: lift throttle + hold C clutch to shift." : "Automatic: use P/N/R or drive with forward gears.";
+    $("shiftStatus").textContent = state.shiftBlockedReason || manualHint;
+  }
   $("launchBtn").classList.toggle("active", state.launchControl);
   $("launchBtn").textContent = state.launchControl ? "Launch control on" : "Launch control off";
-  $("gearUpBtn").disabled = !enabled || state.transmissionType === "cvt";
-  $("gearDownBtn").disabled = !enabled || state.transmissionType === "cvt";
-  if($("sceneShiftUpBtn")) $("sceneShiftUpBtn").disabled = !enabled || state.transmissionType === "cvt";
-  if($("sceneShiftDownBtn")) $("sceneShiftDownBtn").disabled = !enabled || state.transmissionType === "cvt";
+  $("gearUpBtn").disabled = !enabled;
+  $("gearDownBtn").disabled = !enabled;
+  if($("sceneShiftUpBtn")) $("sceneShiftUpBtn").disabled = !enabled;
+  if($("sceneShiftDownBtn")) $("sceneShiftDownBtn").disabled = !enabled;
   if($("sceneAutoManualBtn")){ $("sceneAutoManualBtn").textContent = `Mode: ${state.transmissionMode === "auto" ? "Auto" : "Manual"}`; $("sceneAutoManualBtn").classList.toggle("active", state.transmissionMode === "manual"); }
   $("finalDrive").disabled = !enabled;
   if($("gearCount")){
@@ -1537,7 +1655,7 @@ function physics(dt){
     const comboAssist = state.secondaryEngine === "electric" ? 110 : state.secondaryEngine === "rotary" ? 65 : state.secondaryEngine === "rocket" ? 260 : state.secondaryEngine === "turbojet" ? 155 : state.secondaryEngine === "turbofan" ? 130 : 0;
     const engineTorque = (pistonTorqueCurve(Math.max(state.rpm, idle)) * turboMult + hybridTorque + nuclearAssist + comboAssist) * th * (state.shiftTimer > 0 ? .84 : 1);
     applyDrivetrain(engineTorque, idle, freeTarget, dt);
-    if(th < .03 && state.gear === 0 && !state.clutch) state.rpm += (idle - state.rpm) * .06;
+    if(th < .03 && ["P","N"].includes(normalizeGearSelector()) && !state.clutch) state.rpm += (idle - state.rpm) * .06;
     state.output = engineTorque;
     state.power = state.output * state.rpm / 7127;
     state.aux = Math.max(0, (state.displacement / 4) * th * .8);
@@ -2631,6 +2749,84 @@ function drawSharedEngineManifold(cylinders){
   drawExhaustOutletAir(exhaustTo.x + 10, exhaustTo.y, 1);
 }
 
+function drawRadialExternalManifold(radialPorts){
+  if(state.pipesVisible === false || !radialPorts || !radialPorts.length) return;
+  const mode = state.exhaustManifold || "equal_length_headers";
+  const style = {
+    compact_cast:{intakeW:6.4, exhaustW:7.8, neckW:19, outlet:112, intakeR:230, exhaustR:248, hot:false},
+    equal_length_headers:{intakeW:5.8, exhaustW:7.2, neckW:21, outlet:154, intakeR:238, exhaustR:258, hot:true},
+    shorty_headers:{intakeW:6.0, exhaustW:7.6, neckW:20, outlet:128, intakeR:228, exhaustR:246, hot:true},
+    turbo_manifold:{intakeW:6.3, exhaustW:8.0, neckW:22, outlet:104, intakeR:226, exhaustR:244, hot:true},
+    race_merged_collector:{intakeW:5.8, exhaustW:7.0, neckW:25, outlet:184, intakeR:246, exhaustR:268, hot:true}
+  }[mode] || {intakeW:5.8, exhaustW:7.2, neckW:21, outlet:154, intakeR:238, exhaustR:258, hot:true};
+  const intakeY = -288 + (state.intakePipeOffset || 0);
+  const exhaustY = 292 + (state.exhaustPipeOffset || 0);
+  const intakeCollector = {x:226, y:intakeY + 5};
+  const exhaustCollector = {x:226, y:exhaustY - 3};
+  const intakeOutlet = {x:intakeCollector.x + style.outlet, y:intakeY - 12};
+  const exhaustOutlet = {x:exhaustCollector.x + style.outlet + 18, y:exhaustY + 15};
+
+  function drawChromeRing(radius, width, hot, topBias){
+    const grad = chromePipeGradient(-radius, -radius, radius, radius, hot);
+    ctx.save();
+    ctx.strokeStyle = grad;
+    ctx.lineWidth = width;
+    ctx.lineCap = "round";
+    ctx.beginPath();
+    ctx.arc(0, 0, radius, 0, Math.PI * 2);
+    ctx.stroke();
+    ctx.strokeStyle = "rgba(255,255,255,.48)";
+    ctx.lineWidth = Math.max(1.3, width * .18);
+    ctx.beginPath();
+    ctx.arc(0, topBias ? -width * .2 : width * .2, radius - width * .18, Math.PI * 1.08, Math.PI * 1.92);
+    ctx.stroke();
+    ctx.restore();
+  }
+
+  function drawRadialStub(port, radius, width, hot){
+    const a = Math.atan2(port.y, port.x);
+    const radial = {x:Math.cos(a), y:Math.sin(a)};
+    const ringPoint = {x:radial.x * radius, y:radial.y * radius};
+    drawChromeBezier(
+      port,
+      {x:port.x + radial.x * 16, y:port.y + radial.y * 16},
+      {x:ringPoint.x - radial.x * 10, y:ringPoint.y - radial.y * 10},
+      ringPoint,
+      width,
+      hot
+    );
+  }
+
+  radialPorts.forEach(p => drawRadialStub(p.intake, style.intakeR, style.intakeW, false));
+  radialPorts.forEach(p => drawRadialStub(p.exhaust, style.exhaustR, style.exhaustW, style.hot));
+
+  drawChromeRing(style.intakeR, style.intakeW + 1.6, false, true);
+  drawChromeRing(style.exhaustR, style.exhaustW + 1.8, style.hot, false);
+
+  const intakeRingExit = {x:style.intakeR * .70, y:-style.intakeR * .72};
+  drawChromeBezier(
+    intakeRingExit,
+    {x:intakeRingExit.x + 42, y:intakeRingExit.y - 28},
+    {x:intakeCollector.x - 74, y:intakeCollector.y + 2},
+    {x:intakeCollector.x - 34, y:intakeCollector.y},
+    11,
+    false
+  );
+  drawChromeMergeNeck(intakeCollector, intakeOutlet, 18, false);
+
+  const exhaustRingExit = {x:style.exhaustR * .70, y:style.exhaustR * .72};
+  drawChromeBezier(
+    exhaustRingExit,
+    {x:exhaustRingExit.x + 42, y:exhaustRingExit.y + 30},
+    {x:exhaustCollector.x - 76, y:exhaustCollector.y - 2},
+    {x:exhaustCollector.x - 36, y:exhaustCollector.y},
+    style.neckW * .58,
+    style.hot
+  );
+  drawChromeMergeNeck(exhaustCollector, exhaustOutlet, style.neckW, style.hot);
+  drawExhaustOutletAir(exhaustOutlet.x + 10, exhaustOutlet.y, 1);
+}
+
 function drawDetailedRadialCylinder(a, phase, fireActive){
   const axisX = Math.cos(a), axisY = Math.sin(a);
   const pistonTravel = (Math.cos(phase) * .5 + .5) * 52;
@@ -2787,28 +2983,7 @@ function drawPistonBanks(cx, cy, scale){
       });
     }
 
-    if(state.pipesVisible !== false){
-      const topY = -230 + (state.intakePipeOffset || 0);
-      const bottomY = 230 + (state.exhaustPipeOffset || 0);
-      const radialIntakeCollector = {x:150, y:topY + 6};
-      const radialIntakeTo = {x:300, y:topY - 10};
-      radialPorts.forEach((p,i) => {
-        const spread = (i - (radialPorts.length - 1) / 2) * 5;
-        const target = {x:radialIntakeCollector.x - 34, y:radialIntakeCollector.y};
-        drawChromeBezier(p.intake, {x:p.intake.x*.85,y:p.intake.y-28}, {x:radialIntakeCollector.x-78,y:topY+38+spread*.14}, target, 7.0, false);
-      });
-      drawChromeMergeNeck(radialIntakeCollector, radialIntakeTo, 18, false);
-
-      const radialExhaustCollector = {x:150, y:bottomY - 2};
-      const radialExhaustTo = {x:310, y:bottomY + 14};
-      radialPorts.forEach((p,i) => {
-        const spread = (i - (radialPorts.length - 1) / 2) * 5.5;
-        const target = {x:radialExhaustCollector.x - 38, y:radialExhaustCollector.y};
-        drawChromeBezier(p.exhaust, {x:p.exhaust.x*.9,y:p.exhaust.y+32}, {x:radialExhaustCollector.x-84,y:bottomY-44+spread*.12}, target, 8.0, true);
-      });
-      drawChromeMergeNeck(radialExhaustCollector, radialExhaustTo, 20, true);
-      drawExhaustOutletAir(radialExhaustTo.x + 10, radialExhaustTo.y, 1);
-    }
+    drawRadialExternalManifold(radialPorts);
 
     ctx.fillStyle = "#93c5fd";
     ctx.font = "bold 18px system-ui";
@@ -4018,7 +4193,7 @@ function updateDashboardGauges(cfg){
   setGaugeScale("speedGaugeScale", 0, roundedSpeedMax, [], v => `${v}`, 30);
 
   if($("gearGaugeText")){
-    const gearLabel = cfg.family === "jet" ? "AIR" : state.transmissionType === "cvt" ? "CVT" : String(state.gear || 1);
+    const gearLabel = cfg.family === "jet" ? "AIR" : gearDisplayLabel();
     $("gearGaugeName").textContent = "Gear / Power";
     $("gearGaugeText").textContent = gearLabel;
     $("gearGaugeUnit").textContent = cfg.family === "jet" ? "Aircraft" : state.transmissionMode === "auto" ? "Automatic" : "Manual";
@@ -4099,9 +4274,9 @@ function updateUI(){
   $("layoutLabel").textContent = (premiumType ? "⚜ " : "") + cfg.label + (premiumBits.length ? " " + premiumBits.join(" ") : "");
   $("configLabel").textContent = `${cfg.units.name}: ${formatValue(state.units)}`;
   $("rpmOut").textContent = Math.round(state.rpm);
-  $("gearOut").textContent = transmissionApplies(cfg) ? (state.gear === 0 ? "N" : state.gear) : "—";
+  $("gearOut").textContent = transmissionApplies(cfg) ? gearDisplayLabel() : "—";
   $("speedOut").textContent = `${Math.round(state.speed)} km/h`;
-  $("transmissionLabel").textContent = cfg.family === "jet" ? `Aircraft · ${Math.round(state.speed)} km/h` : transmissionApplies(cfg) ? `${state.transmissionMode === "auto" ? "A" : "M"}${state.gear === 0 ? "N" : state.gear} · ${Math.round(state.speed)} km/h` : "Direct drive";
+  $("transmissionLabel").textContent = cfg.family === "jet" ? `Aircraft · ${Math.round(state.speed)} km/h` : transmissionApplies(cfg) ? `${state.transmissionMode === "auto" ? "A" : "M"}${gearDisplayLabel()} · ${Math.round(state.speed)} km/h` : "Direct drive";
 
   if(cfg.family === "jet"){
     $("outputOut").textContent = `${state.output.toFixed(1)} kN`;
@@ -4348,28 +4523,61 @@ function setup(){
   $("fuel").oninput = e => { state.fuel = +e.target.value; };
   $("timing").oninput = e => { state.timing = +e.target.value; };
 
-  function setAutoMode(){ state.transmissionMode = "auto"; refreshTransmissionControls(); }
-  function setManualMode(){ state.transmissionMode = "manual"; refreshTransmissionControls(); }
-  function shiftUpManual(){ if(transmissionApplies(getConfig())){ state.transmissionMode = "manual"; shiftTo(state.gear + 1); refreshTransmissionControls(); } }
-  function shiftDownManual(){ if(transmissionApplies(getConfig())){ state.transmissionMode = "manual"; shiftTo(state.gear - 1); refreshTransmissionControls(); } }
+  function setAutoMode(){ state.transmissionMode = "auto"; state.shiftBlockedReason = ""; refreshTransmissionControls(); }
+  function setManualMode(){ state.transmissionMode = "manual"; state.shiftBlockedReason = ""; refreshTransmissionControls(); }
+  function shiftUpManual(){ if(transmissionApplies(getConfig())){ if(state.transmissionMode !== "manual") state.transmissionMode = "manual"; requestShiftUp(); refreshTransmissionControls(); } }
+  function shiftDownManual(){ if(transmissionApplies(getConfig())){ if(state.transmissionMode !== "manual") state.transmissionMode = "manual"; requestShiftDown(); refreshTransmissionControls(); } }
+  function shiftUpRequest(){ if(transmissionApplies(getConfig())){ requestShiftUp(); refreshTransmissionControls(); } }
+  function shiftDownRequest(){ if(transmissionApplies(getConfig())){ requestShiftDown(); refreshTransmissionControls(); } }
 
   $("autoModeBtn").onclick = setAutoMode;
   $("manualModeBtn").onclick = setManualMode;
-  $("gearUpBtn").onclick = shiftUpManual;
-  $("gearDownBtn").onclick = shiftDownManual;
-  $("transmissionType").onchange = e => { state.transmissionType = e.target.value; if(state.transmissionType === "cvt") state.transmissionMode = "auto"; refreshTransmissionControls(); };
+  $("gearUpBtn").onclick = shiftUpRequest;
+  $("gearDownBtn").onclick = shiftDownRequest;
+  if($("parkBtn")) $("parkBtn").onclick = () => { requestPark(); refreshTransmissionControls(); };
+  if($("neutralBtn")) $("neutralBtn").onclick = () => {
+    if(state.transmissionMode !== "manual" || canManualShift()) setSelector("N", {force:true});
+    refreshTransmissionControls();
+  };
+  if($("reverseBtn")) $("reverseBtn").onclick = () => {
+    if(state.transmissionMode === "manual") requestShiftDown();
+    else setSelector("R");
+    refreshTransmissionControls();
+  };
+  if($("driveBtn")) $("driveBtn").onclick = () => {
+    if(state.transmissionMode === "manual"){
+      if(canManualShift()) setSelector("D", {force:true});
+    } else {
+      setSelector("D", {force:true});
+    }
+    refreshTransmissionControls();
+  };
+  if($("gearSelectorSelect")) $("gearSelectorSelect").onchange = e => {
+    const value = e.target.value;
+    if(value === "P") requestPark();
+    else if(value === "D"){
+      if(state.transmissionMode !== "manual" || canManualShift()) setSelector("D", {force:true});
+    } else if(value === "N"){
+      if(state.transmissionMode !== "manual" || canManualShift()) setSelector("N", {force:true});
+    } else if(value === "R"){
+      if(state.transmissionMode === "manual") requestShiftDown();
+      else setSelector("R");
+    }
+    refreshTransmissionControls();
+  };
+  $("transmissionType").onchange = e => { state.transmissionType = e.target.value; if(state.transmissionType === "cvt") state.transmissionMode = "auto"; if(state.gearSelector === "D" && state.gear < 1) state.gear = 1; refreshTransmissionControls(); };
   $("launchBtn").onclick = () => { state.launchControl = !state.launchControl; beep(state.launchControl ? 820 : 300, .05, "triangle", .03); refreshTransmissionControls(); };
   $("shortcutAuto").onclick = setAutoMode;
   $("shortcutManual").onclick = setManualMode;
-  $("shortcutUp").onclick = shiftUpManual;
-  $("shortcutDown").onclick = shiftDownManual;
+  $("shortcutUp").onclick = shiftUpRequest;
+  $("shortcutDown").onclick = shiftDownRequest;
   $("transmissionNoteToggle").onclick = () => { state.noteOpen = !state.noteOpen; refreshTransmissionControls(); };
   $("finalDrive").oninput = e => { state.finalDrive = +e.target.value; refreshTransmissionControls(); };
   $("gearCount").oninput = e => {
     state.gearCount = Math.max(1, Math.min(10, Math.round(+e.target.value || 1)));
     const maxGear = getMaxDrivenGear();
     if(state.gear > maxGear) state.gear = maxGear;
-    if(state.gear < 1 && transmissionApplies(getConfig())) state.gear = 1;
+    if(state.gear < 1 && transmissionApplies(getConfig()) && normalizeGearSelector() === "D") state.gear = 1;
     if(state.transmissionType === "cvt") state.virtualRatio = getGearSetup().ratios[1] || state.virtualRatio || 1;
     refreshTransmissionControls();
   };
@@ -4382,7 +4590,6 @@ function setup(){
       beep(160, .12, "sawtooth", .08);
       startAudio();
       state.rpm = Math.max(state.rpm, getConfig().family === "jet" ? 2200 : getConfig().family === "electric" ? 0 : 820);
-      if(transmissionApplies(getConfig()) && state.gear === 0) state.gear = 1;
     }else{
       beep(120, .12, "sine", .04);
       stopAudio();
@@ -4413,8 +4620,8 @@ function setup(){
   bindScenePadPedal("sceneClutchBtn", "clutch", "clutch");
   bindScenePadPedal("sceneBrakeBtn", "brake", "brake");
   bindScenePadPedal("sceneGasBtn", "gas", "gas");
-  if($("sceneShiftUpBtn")) $("sceneShiftUpBtn").onclick = shiftUpManual;
-  if($("sceneShiftDownBtn")) $("sceneShiftDownBtn").onclick = shiftDownManual;
+  if($("sceneShiftUpBtn")) $("sceneShiftUpBtn").onclick = shiftUpRequest;
+  if($("sceneShiftDownBtn")) $("sceneShiftDownBtn").onclick = shiftDownRequest;
   if($("sceneAutoManualBtn")) $("sceneAutoManualBtn").onclick = () => { state.transmissionMode === "auto" ? setManualMode() : setAutoMode(); refreshTransmissionControls(); };
 
   const held = new Set();
@@ -4426,8 +4633,9 @@ function setup(){
     if(e.key === " "){ e.preventDefault(); $("startBtn").click(); }
     if(e.key === "a" || e.key === "A"){ setAutoMode(); }
     if(e.key === "m" || e.key === "M"){ setManualMode(); }
-    if(e.key === "[" || e.key === ","){ shiftDownManual(); }
-    if(e.key === "]" || e.key === "."){ shiftUpManual(); }
+    if(e.key === "[" || e.key === ","){ shiftDownRequest(); }
+    if(e.key === "]" || e.key === "."){ shiftUpRequest(); }
+    if(e.key === "p" || e.key === "P"){ requestPark(); refreshTransmissionControls(); }
     if(e.key === "l" || e.key === "L"){ $("launchBtn").click(); }
     if(e.key === "0"){ resetSceneView(); e.preventDefault(); }
     if(e.shiftKey && e.key === "ArrowLeft"){ state.scenePanX -= 24; clampSceneView(); e.preventDefault(); }
@@ -4470,7 +4678,7 @@ function setup(){
       on:false, type:"v", units:8, displacement:4.0, compression:10.0, extra1:0, extra2:0,
       afterburner:false, throttle:0, gas:false, clutch:false, brake:false, load:35,
       fuel:1.0, timing:0, revLimit:7000, rpm:0, temp:20, output:0, power:0, aux:0, crank:0,
-      speed:0, gear:1, transmissionMode:"auto", transmissionType:"dct", launchControl:false, finalDrive:3.42, shiftTimer:0, virtualRatio:0, noteOpen:false, graphVisible:true, dynoGraphMode:"powerTorque", soundMode:"auto", soundVolume:70, raceResults:[], engineCover:"none", exhaustManifold:"equal_length_headers", intakePipeOffset:0, exhaustPipeOffset:0, pipesVisible:true,
+      speed:0, gear:1, gearSelector:"P", shiftBlockedReason:"", lastShiftTime:0, transmissionMode:"auto", transmissionType:"dct", launchControl:false, finalDrive:3.42, shiftTimer:0, virtualRatio:0, noteOpen:false, graphVisible:true, dynoGraphMode:"powerTorque", soundMode:"auto", soundVolume:70, raceResults:[], engineCover:"none", exhaustManifold:"equal_length_headers", intakePipeOffset:0, exhaustPipeOffset:0, pipesVisible:true,
       dyno:false, dynoRpm:1000, dynoData:[], turboAddon:"none", hybridSystem:"none", nuclearFission:"none", secondaryEngine:"none", systemPower:50, fuelTanks:true, scenePanX:0, scenePanY:0, sceneZoom:.35, overlayMinimized:false, ecoMode:false, lastMatchedProfile:null, vehicleDrive:"rwd", bodyType:"coupe", spoilerPackage:"none", tireType:"street", tireSize:20, rimStyle:"alloy", gaugeStyle:"classic", gaugeDisplayMode:"analog", panelMinimized:false, mobileMode:false, experienceMode:"advanced", buildStats:makeEmptyBuildStats()
     });
     stopAudio();

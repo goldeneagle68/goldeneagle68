@@ -30,6 +30,11 @@ h1{margin:4px 0 0;font-size:24px;letter-spacing:-.045em;font-weight:720}
   font-weight:800;box-shadow:0 12px 28px rgba(0,0,0,.13)
 }
 .app{max-width:1480px;margin:auto;display:grid;grid-template-columns:minmax(0,1fr) 410px;min-height:calc(100vh - 68px)}
+.appFooter{
+  max-width:1480px;margin:0 auto;padding:10px 24px 18px;
+  color:var(--muted);font-size:11px;font-weight:900;letter-spacing:.12em;
+  text-transform:uppercase;text-align:right;
+}
 .stage{
   position:sticky;top:68px;height:calc(100vh - 68px);border-right:1px solid var(--line);
   display:grid;grid-template-rows:minmax(360px,1fr) auto;overflow:hidden;background:rgba(255,255,255,.28)

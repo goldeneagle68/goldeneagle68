@@ -68,6 +68,7 @@ const TYPES = {
 const canvas = document.getElementById("sim");
 const ctx = canvas.getContext("2d");
 const $ = id => document.getElementById(id);
+const DEFAULT_SCENE_ZOOM = .90;
 
 const state = {
   on:false,
@@ -84,6 +85,7 @@ const state = {
   brake:false,
   load:35,
   fuel:1.0,
+  fuelSystem:"injection",
   timing:0,
   revLimit:7000,
   rpm:0,
@@ -131,8 +133,8 @@ const state = {
   fuelTanks:true,
   scenePanX:0,
   scenePanY:0,
-  sceneZoom:.35,
-  overlayMinimized:false,
+  sceneZoom:DEFAULT_SCENE_ZOOM,
+  overlayMinimized:true,
   ecoMode:false,
   lastMatchedProfile:null,
   discoveredFamousProfiles:[],
@@ -142,6 +144,9 @@ const state = {
   tireType:"street",
   tireSize:20,
   rimStyle:"alloy",
+  speedLimiterEnabled:false,
+  speedLimitKmh:120,
+  speedLimiterActive:false,
   gaugeStyle:"classic",
   gaugeDisplayMode:"analog",
   panelMinimized:false,
@@ -288,7 +293,7 @@ function soundProfile(mode=getEffectiveSoundMode()){
 }
 
 function captureBuildState(){
-  const keys = ["type","units","displacement","compression","extra1","extra2","revLimit","turboAddon","hybridSystem","nuclearFission","secondaryEngine","systemPower","fuelTanks","vehicleDrive","bodyType","spoilerPackage","tireType","tireSize","rimStyle","gear","gearSelector","gearCount","transmissionMode","transmissionType","finalDrive","gearboxAnimation","gaugeStyle","gaugeDisplayMode","engineCover","exhaustManifold","intakePipeOffset","exhaustPipeOffset","pipesVisible","soundMode","soundVolume"];
+  const keys = ["type","units","displacement","compression","extra1","extra2","revLimit","fuelSystem","turboAddon","hybridSystem","nuclearFission","secondaryEngine","systemPower","fuelTanks","vehicleDrive","bodyType","spoilerPackage","tireType","tireSize","rimStyle","speedLimiterEnabled","speedLimitKmh","gear","gearSelector","gearCount","transmissionMode","transmissionType","finalDrive","gearboxAnimation","gaugeStyle","gaugeDisplayMode","engineCover","exhaustManifold","intakePipeOffset","exhaustPipeOffset","pipesVisible","soundMode","soundVolume"];
   const build = {};
   keys.forEach(k => build[k] = state[k]);
   return build;
@@ -834,11 +839,15 @@ function syncInputsToState(){
   if($("tireType")) $("tireType").value = state.tireType;
   if($("tireSize")) $("tireSize").value = state.tireSize;
   if($("rimStyle")) $("rimStyle").value = state.rimStyle;
+  normalizeSpeedLimiter();
+  if($("speedLimitKmh")) $("speedLimitKmh").value = state.speedLimitKmh;
   if($("gaugeStyle")) $("gaugeStyle").value = state.gaugeStyle || "classic";
   if($("gaugeDisplayMode")) $("gaugeDisplayMode").value = state.gaugeDisplayMode || "analog";
   if($("exhaustManifold")) $("exhaustManifold").value = state.exhaustManifold || "equal_length_headers";
   if($("intakePipeOffset")) $("intakePipeOffset").value = state.intakePipeOffset || 0;
   if($("exhaustPipeOffset")) $("exhaustPipeOffset").value = state.exhaustPipeOffset || 0;
+  normalizeFuelSystem();
+  if($("fuelSystem")) $("fuelSystem").value = state.fuelSystem;
   if(typeof state.pipesVisible !== "boolean") state.pipesVisible = true;
   if(typeof state.gearboxAnimation !== "boolean") state.gearboxAnimation = true;
   if(typeof state.starterTimer !== "number") state.starterTimer = 0;
@@ -869,6 +878,8 @@ function refreshDynamicControls(){
   $("displacementWrap").classList.toggle("hide", !cfg.displacement);
   $("compressionWrap").classList.toggle("hide", !cfg.compression);
   $("fuelWrap").classList.toggle("hide", cfg.family === "electric");
+  if($("fuelSystemWrap")) $("fuelSystemWrap").classList.toggle("hide", !fuelSystemApplies(cfg));
+  if($("fuelSystemOut")) $("fuelSystemOut").textContent = fuelSystemLabel();
   $("timingWrap").classList.toggle("hide", cfg.family === "electric");
   $("afterburnerBtn").classList.toggle("hide", state.type !== "turbojet");
   if($("aircraftControls")){
@@ -957,6 +968,28 @@ function transmissionApplies(cfg=getConfig()){
   return ["piston","rotary","electric","linear","external","hydraulic"].includes(cfg.family);
 }
 
+function gearboxVisualApplies(cfg=getConfig()){
+  return transmissionApplies(cfg) && cfg.family !== "electric";
+}
+
+function fuelSystemApplies(cfg=getConfig()){
+  return cfg.family === "piston" || cfg.family === "rotary" || ["turbofan","geared_turbofan","turboprop"].includes(state.type);
+}
+
+function normalizeFuelSystem(){
+  if(state.fuelSystem !== "carburetor" && state.fuelSystem !== "injection") state.fuelSystem = "injection";
+  if(!fuelSystemApplies(getConfig())) state.fuelSystem = "injection";
+}
+
+function fuelSystemLabel(){
+  return state.fuelSystem === "carburetor" ? "Carburetor" : "Fuel injection";
+}
+
+function fuelSystemOutputMultiplier(cfg=getConfig()){
+  if(!fuelSystemApplies(cfg)) return 1;
+  return state.fuelSystem === "carburetor" ? .94 : 1.03;
+}
+
 // Road-car physics tuning. The previous aero term used km/h² with a coefficient that
 // was much too large, creating an artificial top-speed wall. These values keep launch
 // traction readable while letting capable builds pull to 300+ km/h when gearing allows.
@@ -967,6 +1000,49 @@ const ROAD_PHYSICS = {
   topEndAssistStart: 180,
   topEndAssistMax: 1.18
 };
+
+function normalizeSpeedLimiter(){
+  if(typeof state.speedLimiterEnabled !== "boolean") state.speedLimiterEnabled = false;
+  const rawLimit = Number(state.speedLimitKmh);
+  state.speedLimitKmh = Math.max(20, Math.min(450, Number.isFinite(rawLimit) ? Math.round(rawLimit) : 120));
+  if(typeof state.speedLimiterActive !== "boolean") state.speedLimiterActive = false;
+}
+
+function speedLimiterTorqueCut(speedAbs = Math.abs(state.speed || 0)){
+  normalizeSpeedLimiter();
+  if(!state.speedLimiterEnabled){
+    state.speedLimiterActive = false;
+    return 1;
+  }
+  const limit = state.speedLimitKmh;
+  const taperStart = limit * .92;
+  if(speedAbs < taperStart){
+    state.speedLimiterActive = false;
+    return 1;
+  }
+  const over = Math.max(0, Math.min(1, (speedAbs - taperStart) / Math.max(1, limit - taperStart)));
+  const cut = Math.max(0, 1 - Math.pow(over, 1.35));
+  state.speedLimiterActive = speedAbs >= limit * .985 || cut < .35;
+  return cut;
+}
+
+function applyElectronicSpeedLimiter(dt){
+  normalizeSpeedLimiter();
+  if(!state.speedLimiterEnabled){
+    state.speedLimiterActive = false;
+    return;
+  }
+  const speedAbs = Math.abs(state.speed || 0);
+  const limit = state.speedLimitKmh;
+  if(speedAbs <= limit){
+    if(speedAbs < limit * .985) state.speedLimiterActive = false;
+    return;
+  }
+  state.speedLimiterActive = true;
+  const excess = speedAbs - limit;
+  const bleed = Math.min(excess, (1.2 + excess * .45) * dt * 12);
+  state.speed = Math.sign(state.speed || 1) * Math.max(limit, speedAbs - bleed);
+}
 
 function getMaxDrivenGear(){
   const setup = getGearSetup();
@@ -1071,6 +1147,11 @@ function gearDisplayLabel(){
   if(state.transmissionType === "cvt") return selector === "D" ? "CVT" : selector;
   if(selector === "D") return String(Math.max(1, Math.min(getMaxDrivenGear(), state.gear || 1)));
   return selector;
+}
+
+function speedDisplayText(){
+  normalizeSpeedLimiter();
+  return `${Math.round(state.speed)} km/h${state.speedLimiterActive ? " · LIM" : ""}`;
 }
 
 function setShiftBlocked(reason){
@@ -1481,7 +1562,8 @@ function applyDrivetrain(engineTorque, idle, freeTargetRpm, dt){
   const vset = getVehicleSetup();
   const drivelineEff = disconnected && !launchHold ? 0 : vset.drivelineEff;
   const tractionLimit = (5.4 + Math.min(3.6, state.speed / 90) * (vset.downforce - 1)) * vset.launchGrip;
-  const rawWheelTorque = engineTorque * ratio * drivelineEff * shiftCut * launchBoost * limiterCut;
+  const electronicCut = speedLimiterTorqueCut(speedAbs);
+  const rawWheelTorque = engineTorque * ratio * drivelineEff * shiftCut * launchBoost * limiterCut * electronicCut;
   const wheelTorque = Math.sign(rawWheelTorque || 1) * Math.min(Math.abs(rawWheelTorque), vset.mass * tractionLimit);
 
   const vehicleMass = vset.mass;
@@ -1509,12 +1591,13 @@ function applyDrivetrain(engineTorque, idle, freeTargetRpm, dt){
 function refreshTransmissionControls(){
   const cfg = getConfig();
   const enabled = transmissionApplies(cfg);
+  const visualEnabled = gearboxVisualApplies(cfg);
   const selector = enabled ? normalizeGearSelector() : "N";
   const gearLabel = enabled ? gearDisplayLabel() : "—";
   $("transmissionSection").classList.toggle("hide", !enabled);
-  $("transmissionLabel").textContent = enabled ? `${state.transmissionMode === "auto" ? "A" : "M"}${gearLabel} · ${Math.round(state.speed)} km/h` : "Direct drive";
+  $("transmissionLabel").textContent = enabled ? `${state.transmissionMode === "auto" ? "A" : "M"}${gearLabel} · ${speedDisplayText()}` : "Direct drive";
   $("gearOut").textContent = gearLabel;
-  $("speedOut").textContent = `${Math.round(state.speed)} km/h`;
+  $("speedOut").textContent = speedDisplayText();
   $("autoModeBtn").classList.toggle("active", state.transmissionMode === "auto");
   $("manualModeBtn").classList.toggle("active", state.transmissionMode === "manual");
   if($("parkBtn")) $("parkBtn").classList.toggle("active", selector === "P");
@@ -1544,14 +1627,14 @@ function refreshTransmissionControls(){
   if($("gearboxAnimationBtn")){
     $("gearboxAnimationBtn").classList.toggle("active", state.gearboxAnimation !== false);
     $("gearboxAnimationBtn").textContent = state.gearboxAnimation === false ? "Gearbox animation off" : "Gearbox animation on";
-    $("gearboxAnimationBtn").disabled = !enabled;
+    $("gearboxAnimationBtn").disabled = !visualEnabled;
   }
   if($("gearboxAnimationOut")){
     const pairCount = Math.max(1, Math.min(10, Math.round(state.gearCount || 7)));
     const activeGear = selector === "D" ? `gear ${Math.max(1, Math.min(pairCount, state.gear || 1))}` : selector;
-    $("gearboxAnimationOut").textContent = enabled
+    $("gearboxAnimationOut").textContent = visualEnabled
       ? `Flywheel, starter, shafts, and ${pairCount} gear pair${pairCount === 1 ? "" : "s"} visible. Active: ${activeGear}.`
-      : "Direct-drive engines hide the road gearbox animation.";
+      : "Electric and direct-drive engines hide the road gearbox animation.";
   }
   $("finalDriveOut").textContent = `${state.finalDrive.toFixed(2)}:1`;
   $("transmissionNoteToggle").classList.toggle("active", state.noteOpen);
@@ -1586,7 +1669,7 @@ function pistonTorqueCurve(rpm){
     const spool = Math.max(.25, Math.min(1.25, (rpm - 1300) / (turboSize * 70)));
     extraFactor *= 1 + boost * .42 * spool;
   }
-  let baseTorque = Math.max(0, 520 * disp * cyl * comp * (.48 + .52 * curve) * fuel * tim * extraFactor);
+  let baseTorque = Math.max(0, 520 * disp * cyl * comp * (.48 + .52 * curve) * fuel * tim * extraFactor * fuelSystemOutputMultiplier(getConfig()));
   if(state.type === "mild_hybrid" || state.type === "full_hybrid" || state.type === "plug_in_hybrid"){
     const assistHp = state.extra1 || 0;
     const charge = Math.max(0, Math.min(1, (state.extra2 || 0) / 100));
@@ -1603,7 +1686,7 @@ function rotaryTorqueCurve(rpm){
   const fuel = 1 - Math.min(.28, Math.abs(state.fuel - 1) * 1.0);
   const tim = 1 + state.timing * .010;
   const curve = Math.exp(-Math.pow((rpm - 6200)/3400, 2));
-  return Math.max(0, 310 * rotors * disp * (.3 + .9 * curve) * port * fuel * tim);
+  return Math.max(0, 310 * rotors * disp * (.3 + .9 * curve) * port * fuel * tim * fuelSystemOutputMultiplier(getConfig()));
 }
 
 function electricTorqueCurve(rpm){
@@ -1646,12 +1729,12 @@ function jetThrust(type, spoolNorm){
     const bypass = state.extra1 || 6;
     const prOrGear = state.extra2 || 32;
     const gearBonus = type==="geared_turbofan" ? 1.12 : 1;
-    return (35 + fanStages * 9 + bypass * 4.2 + prOrGear * (type==="geared_turbofan" ? 4.0 : .7)) * Math.pow(spoolNorm, 1.04) * gearBonus;
+    return (35 + fanStages * 9 + bypass * 4.2 + prOrGear * (type==="geared_turbofan" ? 4.0 : .7)) * Math.pow(spoolNorm, 1.04) * gearBonus * fuelSystemOutputMultiplier(getConfig());
   }
   const blades = state.units;
   const diameter = state.extra1 || 3.6;
   const gear = state.extra2 || 12;
-  return (22 + blades * 4.5 + diameter * 18 + gear * 1.4) * Math.pow(spoolNorm, .96);
+  return (22 + blades * 4.5 + diameter * 18 + gear * 1.4) * Math.pow(spoolNorm, .96) * fuelSystemOutputMultiplier(getConfig());
 }
 
 
@@ -1674,6 +1757,7 @@ function physics(dt){
     state.output = 0;
     state.power = 0;
     state.speed = Math.max(0, state.speed - dt * 4);
+    applyElectronicSpeedLimiter(dt);
     return;
   }
 
@@ -1754,6 +1838,7 @@ function physics(dt){
   }
 
   state.temp = Math.max(20, state.temp);
+  applyElectronicSpeedLimiter(dt);
   state.crank += Math.max(0, state.rpm) / 60 * Math.PI * 2 * dt;
 }
 
@@ -1788,6 +1873,8 @@ function updateBuildStats(cfg=getConfig()){
 
 function estimateZeroToHundred(cfg=getConfig()){
   if(cfg.family === "jet") return "Aircraft";
+  normalizeSpeedLimiter();
+  if(state.speedLimiterEnabled && state.speedLimitKmh < 100) return `Limited ${state.speedLimitKmh} km/h`;
   const stats = state.buildStats || makeEmptyBuildStats();
   const setup = getVehicleSetup();
   const hp = Math.max(stats.peakPower || 0, state.power || 0, 40);
@@ -1799,16 +1886,18 @@ function estimateZeroToHundred(cfg=getConfig()){
 
 function estimateTopSpeed(cfg=getConfig()){
   const stats = state.buildStats || makeEmptyBuildStats();
+  normalizeSpeedLimiter();
+  const applyLimit = estimate => state.speedLimiterEnabled ? Math.min(estimate, state.speedLimitKmh) : estimate;
   if(cfg.family === "jet"){
     const top = Math.max(stats.maxSpeed || 0, Math.min(aircraftMaxSpeedKmh ? aircraftMaxSpeedKmh() : 1000, aircraftMaxSpeedKmh ? aircraftMaxSpeedKmh() : 1000));
-    return `${Math.round(top)} km/h`;
+    return `${Math.round(applyLimit(top))} km/h`;
   }
   const setup = getVehicleSetup();
   const hp = Math.max(stats.peakPower || 0, state.power || 0, 40);
   const gearTop = getTheoreticalTopSpeedKmh ? getTheoreticalTopSpeedKmh() : ROAD_PHYSICS.maxDisplaySpeedKmh;
   const powerTop = 33 * Math.cbrt(hp / Math.max(.45, setup.drag || 1));
   const achieved = stats.maxSpeed || 0;
-  const estimate = Math.max(achieved, Math.min(gearTop, powerTop, ROAD_PHYSICS.maxDisplaySpeedKmh));
+  const estimate = applyLimit(Math.max(achieved, Math.min(gearTop, powerTop, ROAD_PHYSICS.maxDisplaySpeedKmh)));
   return `${Math.round(estimate)} km/h`;
 }
 
@@ -1996,60 +2085,86 @@ function engineIdleRpm(cfg=getConfig()){
 
 function drawGearboxAssembly(cx, cy, scale){
   const cfg = getConfig();
-  if(!transmissionApplies(cfg) || state.gearboxAnimation === false) return;
+  if(!gearboxVisualApplies(cfg) || state.gearboxAnimation === false) return;
 
   const gearCount = Math.max(1, Math.min(10, Math.round(state.gearCount || 7)));
-  const setup = getGearSetup(cfg);
   const selector = normalizeGearSelector();
   const activeGear = selector === "D" ? Math.max(1, Math.min(gearCount, state.gear || 1)) : 0;
   const idleRpm = engineIdleRpm(cfg);
   const starterActive = (state.starterTimer || 0) > 0 && idleRpm > 0 && state.rpm < idleRpm * .96;
   const now = typeof performance !== "undefined" ? performance.now() / 1000 : Date.now() / 1000;
   const inputAngle = state.crank + (starterActive ? now * 18 : 0);
+  const gearboxLocked = selector === "P";
+  const finalDriveCoupled = selector === "D" || selector === "R";
+  const gearInputAngle = gearboxLocked ? 0 : inputAngle;
   const outputRatio = selector === "D"
     ? Math.max(.16, Math.abs(currentGearRatio()) / Math.max(1, state.finalDrive))
     : selector === "R" ? .38 : .12;
-  const outputAngle = selector === "R" ? -state.crank * outputRatio : state.crank * outputRatio;
+  const outputAngle = selector === "D"
+    ? state.crank * outputRatio
+    : selector === "R"
+      ? -state.crank * outputRatio
+      : selector === "N"
+        ? gearInputAngle * .36
+        : 0;
+  const finalDriveSpinning = finalDriveCoupled && Math.abs(state.speed || 0) > .2;
+  const finalAngle = finalDriveSpinning
+    ? now * Math.sign(state.speed || (selector === "R" ? -1 : 1)) * Math.max(.55, Math.abs(state.speed || 0) * .16)
+    : 0;
 
   ctx.save();
   ctx.translate(cx, cy);
   ctx.scale(scale, scale);
 
-  const shaftY = 80;
+  const shaftY = cfg.family === "rotary" ? 0 : 80;
   const boxX = 342;
-  const boxY = -44;
   const boxW = 396;
-  const boxH = 260;
   const gearR = Math.max(13.5, Math.min(22, (boxW - 96) / Math.max(2, gearCount * 2.26)));
   const smallGearR = gearR * .56;
   const largeGearR = gearR * 1.32;
-  const maxGearOuter = toothedOuterRadius(largeGearR);
   const selectorR = Math.max(8.5, gearR * .48);
   const selectorOuter = toothedOuterRadius(selectorR);
-  const rowGap = toothedOuterRadius(smallGearR) + toothedOuterRadius(largeGearR) + selectorOuter * 1.75;
+  const rowGap = (toothedOuterRadius(smallGearR) + selectorOuter - .8) * 2;
   const inputY = shaftY;
   const outputY = inputY + rowGap;
   const midY = (inputY + outputY) * .5;
-  const gearStep = maxGearOuter * 2 - 1.2;
-  const rowSpan = gearStep * (gearCount - 1);
-  const left = boxX + (boxW - rowSpan) * .5;
+  const boxY = inputY - 64;
+  const boxH = rowGap + 148;
   const gearRadiusAt = (i, topRow=true) => {
     const t = gearCount <= 1 ? .5 : (i - 1) / (gearCount - 1);
     const grow = topRow ? t : 1 - t;
     return smallGearR + (largeGearR - smallGearR) * grow;
+  };
+  const gearOuterAt = (i, topRow=true) => toothedOuterRadius(gearRadiusAt(i, topRow));
+  const gearOffsets = [0];
+  for(let i=1;i<gearCount;i++){
+    const topTouch = gearOuterAt(i, true) + gearOuterAt(i + 1, true);
+    const bottomTouch = gearOuterAt(i, false) + gearOuterAt(i + 1, false);
+    gearOffsets.push(gearOffsets[i - 1] + Math.min(topTouch, bottomTouch) - 1.4);
+  }
+  const rowSpan = gearOffsets[gearOffsets.length - 1] || 0;
+  const left = boxX + (boxW - rowSpan) * .5;
+  const gearXAt = index => {
+    if(gearCount <= 1) return left;
+    const clamped = Math.max(1, Math.min(gearCount, index));
+    const lower = Math.floor(clamped);
+    const upper = Math.ceil(clamped);
+    if(lower === upper) return left + gearOffsets[lower - 1];
+    const t = clamped - lower;
+    return left + gearOffsets[lower - 1] + (gearOffsets[upper - 1] - gearOffsets[lower - 1]) * t;
   };
 
   ctx.strokeStyle = "#d7dee9";
   ctx.lineWidth = 9;
   ctx.beginPath();
   ctx.moveTo(218, shaftY);
-  ctx.lineTo(boxX + boxW + 54, shaftY);
+  ctx.lineTo(boxX + boxW - 24, shaftY);
   ctx.stroke();
   ctx.strokeStyle = "rgba(136,153,171,.8)";
   ctx.lineWidth = 3;
   ctx.beginPath();
   ctx.moveTo(220, shaftY + 10);
-  ctx.lineTo(boxX + boxW + 46, shaftY + 10);
+  ctx.lineTo(boxX + boxW - 30, shaftY + 10);
   ctx.stroke();
 
   ctx.save();
@@ -2069,22 +2184,22 @@ function drawGearboxAssembly(cx, cy, scale){
 
   ctx.fillStyle = "#d8bf7a";
   ctx.font = "bold 10px system-ui";
-  ctx.fillText("FLYWHEEL", 254, 134);
+  ctx.fillText("FLYWHEEL", 254, shaftY + 54);
 
   ctx.fillStyle = "#17212d";
   ctx.strokeStyle = starterActive ? "#facc15" : "#64748b";
   ctx.lineWidth = 2;
-  roundRect(224, 142, 108, 42, 17, true, true);
+  roundRect(224, shaftY + 62, 108, 42, 17, true, true);
   ctx.fillStyle = starterActive ? "#fef3c7" : "#9fb0c2";
   ctx.font = "bold 11px system-ui";
-  ctx.fillText(starterActive ? "STARTER ENGAGED" : "STARTER MOTOR", 234, 168);
-  drawToothedGear(310, 130, 13, 12, starterActive ? -now * 42 : -state.crank * .35, "#475569", starterActive ? "#facc15" : "#94a3b8", "", starterActive);
+  ctx.fillText(starterActive ? "STARTER ENGAGED" : "STARTER MOTOR", 234, shaftY + 88);
+  drawToothedGear(310, shaftY + 50, 13, 12, starterActive ? -now * 42 : 0, "#475569", starterActive ? "#facc15" : "#94a3b8", "", starterActive);
   if(starterActive){
     ctx.strokeStyle = "rgba(250,204,21,.72)";
     ctx.lineWidth = 4;
     ctx.beginPath();
-    ctx.moveTo(302, 120);
-    ctx.lineTo(292, 96);
+    ctx.moveTo(302, shaftY + 40);
+    ctx.lineTo(292, shaftY + 16);
     ctx.stroke();
   }
 
@@ -2101,7 +2216,7 @@ function drawGearboxAssembly(cx, cy, scale){
   ctx.moveTo(boxX + 20, inputY);
   ctx.lineTo(boxX + boxW - 26, inputY);
   ctx.moveTo(boxX + 20, outputY);
-  ctx.lineTo(boxX + boxW + 74, outputY);
+  ctx.lineTo(boxX + boxW - 26, outputY);
   ctx.stroke();
   ctx.strokeStyle = "#64748b";
   ctx.lineWidth = 2;
@@ -2109,16 +2224,16 @@ function drawGearboxAssembly(cx, cy, scale){
   ctx.moveTo(boxX + 20, inputY + 8);
   ctx.lineTo(boxX + boxW - 26, inputY + 8);
   ctx.moveTo(boxX + 20, outputY + 8);
-  ctx.lineTo(boxX + boxW + 74, outputY + 8);
+  ctx.lineTo(boxX + boxW - 26, outputY + 8);
   ctx.stroke();
 
   for(let i=1;i<=gearCount;i++){
-    const x = left + (i - 1) * gearStep;
+    const x = gearXAt(i);
     const engaged = i === activeGear && selector === "D";
     const spinMult = engaged ? outputRatio : .22 + i * .015;
     const topR = gearRadiusAt(i, true);
     const bottomR = gearRadiusAt(i, false);
-    drawToothedGear(x, inputY, topR, Math.round(12 + topR * .72), inputAngle * spinMult + i * .18, engaged ? "#b99a55" : "#2d3745", engaged ? "#f8e7a5" : "#94a3b8", String(i), engaged);
+    drawToothedGear(x, inputY, topR, Math.round(12 + topR * .72), gearInputAngle * spinMult + i * .18, engaged ? "#b99a55" : "#2d3745", engaged ? "#f8e7a5" : "#94a3b8", String(i), engaged);
     drawToothedGear(x, outputY, bottomR, Math.round(12 + bottomR * .72), -outputAngle * (engaged ? 1.25 : .35) - i * .21, engaged ? "#d8bf7a" : "#273241", engaged ? "#f8e7a5" : "#7f90a5", "", engaged);
     if(engaged){
       ctx.fillStyle = "#f8e7a5";
@@ -2137,8 +2252,7 @@ function drawGearboxAssembly(cx, cy, scale){
     : 1;
   const easedShift = shiftProgress * shiftProgress * (3 - 2 * shiftProgress);
   const runnerIndex = fromRunnerGear + (targetRunnerGear - fromRunnerGear) * easedShift;
-  const runnerT = Math.max(0, Math.min(gearCount - 1, runnerIndex - 1));
-  const runnerX = left + runnerT * gearStep;
+  const runnerX = gearXAt(runnerIndex);
   const runnerActive = selector === "D" || selector === "R";
   ctx.strokeStyle = "rgba(148,163,184,.35)";
   ctx.lineWidth = 3;
@@ -2151,7 +2265,7 @@ function drawGearboxAssembly(cx, cy, scale){
     midY,
     selectorR,
     Math.round(10 + selectorR * .9),
-    runnerActive ? -inputAngle * Math.max(.55, outputRatio) : -inputAngle * .25,
+    gearboxLocked ? 0 : runnerActive ? -gearInputAngle * Math.max(.55, outputRatio) : -gearInputAngle * .25,
     runnerActive ? "#f59e0b" : "#475569",
     runnerActive ? "#f8e7a5" : "#94a3b8",
     "",
@@ -2159,7 +2273,8 @@ function drawGearboxAssembly(cx, cy, scale){
   );
 
   if(selector === "R"){
-    drawToothedGear(left - gearStep * .55, midY, selectorR, Math.round(10 + selectorR * .9), -inputAngle * .65, "#78350f", "#fb923c", "R", true);
+    const reverseX = left - (gearOuterAt(1, true) + selectorOuter - 1.2);
+    drawToothedGear(reverseX, midY, selectorR, Math.round(10 + selectorR * .9), -gearInputAngle * .65, "#78350f", "#fb923c", "R", true);
   }
   if(selector === "P"){
     ctx.fillStyle = "#ef4444";
@@ -2169,19 +2284,21 @@ function drawGearboxAssembly(cx, cy, scale){
     ctx.fillText("PARK PAWL", boxX + 50, inputY - 10);
   }
 
-  const diffX = boxX + boxW + 68;
-  const finalSmallR = Math.max(14, Math.min(20, rowGap * .30));
-  const finalLargeR = Math.max(28, rowGap - finalSmallR);
-  drawSmoothWheel(diffX, inputY, finalSmallR, outputAngle * 1.4, "#273241", "#93c5fd", "", selector === "D" || selector === "R");
-  drawSmoothWheel(diffX, inputY + finalSmallR + finalLargeR, finalLargeR, -outputAngle * .72, "#1f2937", "#d8bf7a", "", selector === "D" || selector === "R");
-  ctx.strokeStyle = "#cbd5e1";
-  ctx.lineWidth = 5;
+  const diffX = boxX + boxW + 38;
+  const finalR = Math.max(28, Math.min(42, rowGap * .78));
+  ctx.strokeStyle = "#d7dee9";
+  ctx.lineWidth = 8;
   ctx.beginPath();
-  ctx.moveTo(diffX + finalLargeR, inputY + finalSmallR + finalLargeR);
-  ctx.lineTo(diffX + finalLargeR + 58, inputY + finalSmallR + finalLargeR - 18);
-  ctx.moveTo(diffX + finalLargeR, inputY + finalSmallR + finalLargeR);
-  ctx.lineTo(diffX + finalLargeR + 58, inputY + finalSmallR + finalLargeR + 18);
+  ctx.moveTo(boxX + boxW - 26, outputY);
+  ctx.lineTo(diffX - finalR + 4, outputY);
   ctx.stroke();
+  ctx.strokeStyle = "rgba(136,153,171,.8)";
+  ctx.lineWidth = 2.5;
+  ctx.beginPath();
+  ctx.moveTo(boxX + boxW - 26, outputY + 8);
+  ctx.lineTo(diffX - finalR + 4, outputY + 8);
+  ctx.stroke();
+  drawSmoothWheel(diffX, outputY, finalR, finalAngle, "#1f2937", "#d8bf7a", "", finalDriveSpinning);
 
   ctx.fillStyle = "#bfdbfe";
   ctx.font = "bold 12px system-ui";
@@ -2189,7 +2306,7 @@ function drawGearboxAssembly(cx, cy, scale){
   ctx.fillStyle = "#9fb0c2";
   ctx.font = "bold 10px system-ui";
   ctx.fillText(`selector ${selector}  final ${state.finalDrive.toFixed(2)}:1`, boxX + 18, boxY + boxH - 18);
-  ctx.fillText("FINAL DRIVE", diffX - 30, outputY + 56);
+  ctx.fillText("FINAL DRIVE", diffX - 34, outputY + finalR + 18);
 
   ctx.restore();
 }
@@ -3437,6 +3554,214 @@ function drawPistonBanks(cx, cy, scale){
 }
 
 
+function drawRotaryPipes(rotors, spacing){
+  if(state.pipesVisible === false) return;
+  const count = Math.max(1, Math.round(rotors || 1));
+  const rotorXs = Array.from({length:count}, (_, i) => (i - (count - 1) / 2) * spacing);
+  const maxX = Math.max(...rotorXs) + 112;
+  const intakeY = -178 + (state.intakePipeOffset || 0);
+  const exhaustY = 176 + (state.exhaustPipeOffset || 0);
+  const intakeCollector = {x:maxX - 18, y:intakeY + 10};
+  const exhaustCollector = {x:maxX - 12, y:exhaustY - 8};
+  const intakeOutlet = {x:maxX + 128, y:intakeY - 8};
+  const exhaustOutlet = {x:maxX + 142, y:exhaustY + 12};
+
+  rotorXs.forEach((x, i) => {
+    const spread = (i - (count - 1) / 2) * 5;
+    drawChromeBezier(
+      {x:x - 46, y:-92},
+      {x:x - 58, y:intakeY + 28 + spread},
+      {x:intakeCollector.x - 78, y:intakeCollector.y + spread * .35},
+      {x:intakeCollector.x - 34, y:intakeCollector.y},
+      6.5,
+      false
+    );
+    drawChromeBezier(
+      {x:x + 58, y:82},
+      {x:x + 70, y:exhaustY - 36 - spread},
+      {x:exhaustCollector.x - 82, y:exhaustCollector.y - spread * .35},
+      {x:exhaustCollector.x - 36, y:exhaustCollector.y},
+      8,
+      true
+    );
+  });
+
+  drawChromeMergeNeck(intakeCollector, intakeOutlet, 18, false);
+  drawChromeMergeNeck(exhaustCollector, exhaustOutlet, 21, true);
+  ctx.fillStyle = "#bfdbfe";
+  ctx.font = "bold 10px system-ui";
+  ctx.fillText("ROTARY INTAKE", intakeCollector.x - 120, intakeY - 12);
+  ctx.fillStyle = "#fed7aa";
+  ctx.fillText("ROTARY EXHAUST", exhaustCollector.x - 126, exhaustY + 34);
+  drawExhaustOutletAir(exhaustOutlet.x + 10, exhaustOutlet.y, 1);
+}
+
+function drawRotaryHousing(){
+  ctx.save();
+  const bodyGrad = ctx.createLinearGradient(-130, -168, 130, 168);
+  bodyGrad.addColorStop(0, "#263444");
+  bodyGrad.addColorStop(.48, "#111827");
+  bodyGrad.addColorStop(1, "#334155");
+  ctx.fillStyle = bodyGrad;
+  ctx.strokeStyle = "#5e7188";
+  ctx.lineWidth = 7;
+  ctx.beginPath();
+  ctx.ellipse(0, 0, 128, 172, 0, 0, Math.PI * 2);
+  ctx.fill();
+  ctx.stroke();
+
+  ctx.strokeStyle = "rgba(255,255,255,.32)";
+  ctx.lineWidth = 3;
+  ctx.beginPath();
+  ctx.ellipse(0, 0, 106, 148, 0, 0, Math.PI * 2);
+  ctx.stroke();
+
+  ctx.strokeStyle = "rgba(15,23,42,.72)";
+  ctx.lineWidth = 2;
+  ctx.beginPath();
+  ctx.ellipse(0, 0, 118, 160, 0, 0, Math.PI * 2);
+  ctx.stroke();
+
+  ctx.restore();
+}
+
+function drawReuleauxRotor(angle){
+  const orbit = angle * 3;
+  const eccentricX = Math.cos(orbit) * 18;
+  const eccentricY = Math.sin(orbit) * 26;
+  const apexR = 98;
+  const sideBulge = 126;
+  const points = [];
+  for(let n=0;n<3;n++){
+    const a = angle + n * Math.PI * 2 / 3 - Math.PI / 2;
+    points.push({x:Math.cos(a) * apexR, y:Math.sin(a) * apexR, a});
+  }
+
+  ctx.save();
+  ctx.translate(eccentricX, eccentricY);
+  ctx.beginPath();
+  ctx.moveTo(points[0].x, points[0].y);
+  for(let n=0;n<3;n++){
+    const p = points[n];
+    const q = points[(n + 1) % 3];
+    const midA = Math.atan2(p.y + q.y, p.x + q.x);
+    const c = {x:Math.cos(midA) * sideBulge, y:Math.sin(midA) * sideBulge};
+    ctx.quadraticCurveTo(c.x, c.y, q.x, q.y);
+  }
+  ctx.closePath();
+  ctx.fillStyle = "#a8a19a";
+  ctx.strokeStyle = "#f2f2f2";
+  ctx.lineWidth = 3;
+  ctx.fill();
+  ctx.stroke();
+
+  ctx.fillStyle = "rgba(15,23,42,.62)";
+  ctx.strokeStyle = "#d8bf7a";
+  ctx.lineWidth = 2.5;
+  ctx.beginPath();
+  ctx.arc(0, 0, 38, 0, Math.PI * 2);
+  ctx.fill();
+  ctx.stroke();
+
+  ctx.strokeStyle = "rgba(40,40,44,.62)";
+  ctx.lineWidth = 2;
+  for(let n=0;n<3;n++){
+    const p = points[n];
+    ctx.beginPath();
+    ctx.moveTo(p.x * .22, p.y * .22);
+    ctx.lineTo(p.x * .88, p.y * .88);
+    ctx.stroke();
+
+    ctx.fillStyle = "#e8e6e3";
+    ctx.strokeStyle = "#1f2937";
+    ctx.lineWidth = 1.4;
+    ctx.beginPath();
+    ctx.arc(p.x * .98, p.y * .98, 6, 0, Math.PI * 2);
+    ctx.fill();
+    ctx.stroke();
+  }
+
+  drawToothedGear(0, 0, 32, 28, -angle * 1.9, "#7f7a75", "#e5e7eb", "", false);
+  ctx.restore();
+
+  ctx.save();
+  ctx.strokeStyle = "rgba(216,191,122,.72)";
+  ctx.lineWidth = 4;
+  ctx.lineCap = "round";
+  ctx.beginPath();
+  ctx.moveTo(0, 0);
+  ctx.lineTo(eccentricX, eccentricY);
+  ctx.stroke();
+
+  drawToothedGear(0, 0, 42, 34, -orbit * .62, "#2f343b", "#e5e7eb", "", false);
+  drawToothedGear(0, 0, 24, 22, orbit * .86, "#111827", "#cbd5e1", "", false);
+
+  const shaftGrad = ctx.createLinearGradient(-12, -14, 74, 14);
+  shaftGrad.addColorStop(0, "#2b3037");
+  shaftGrad.addColorStop(.35, "#7d858f");
+  shaftGrad.addColorStop(.62, "#d8dee6");
+  shaftGrad.addColorStop(1, "#242a32");
+  ctx.strokeStyle = shaftGrad;
+  ctx.lineWidth = 24;
+  ctx.lineCap = "round";
+  ctx.beginPath();
+  ctx.moveTo(-10, 0);
+  ctx.lineTo(70, 0);
+  ctx.stroke();
+  ctx.strokeStyle = "rgba(255,255,255,.48)";
+  ctx.lineWidth = 3;
+  ctx.beginPath();
+  ctx.moveTo(-4, -7);
+  ctx.lineTo(60, -7);
+  ctx.stroke();
+
+  ctx.fillStyle = "#1f2937";
+  ctx.strokeStyle = "#f8fafc";
+  ctx.lineWidth = 2;
+  ctx.beginPath();
+  ctx.arc(0, 0, 13, 0, Math.PI * 2);
+  ctx.fill();
+  ctx.stroke();
+  ctx.fillStyle = "#05070a";
+  ctx.beginPath();
+  ctx.arc(0, 0, 6, 0, Math.PI * 2);
+  ctx.fill();
+  ctx.restore();
+}
+
+function drawRotaryCenterShaft(rotorXs, spacing){
+  const minX = Math.min(...rotorXs) - 18;
+  const maxX = Math.max(...rotorXs) + Math.max(238, spacing * .45 + 220);
+  const grad = ctx.createLinearGradient(minX, -18, maxX, 18);
+  grad.addColorStop(0, "#2b3037");
+  grad.addColorStop(.35, "#aeb7c2");
+  grad.addColorStop(.55, "#f8fafc");
+  grad.addColorStop(.78, "#5d6672");
+  grad.addColorStop(1, "#1f2937");
+  ctx.save();
+  ctx.strokeStyle = grad;
+  ctx.lineWidth = 24;
+  ctx.lineCap = "round";
+  ctx.beginPath();
+  ctx.moveTo(minX, 0);
+  ctx.lineTo(maxX, 0);
+  ctx.stroke();
+  ctx.strokeStyle = "rgba(255,255,255,.55)";
+  ctx.lineWidth = 3;
+  ctx.beginPath();
+  ctx.moveTo(minX + 10, -7);
+  ctx.lineTo(maxX - 8, -7);
+  ctx.stroke();
+  rotorXs.forEach(x => {
+    ctx.strokeStyle = "#d8bf7a";
+    ctx.lineWidth = 3;
+    ctx.beginPath();
+    ctx.arc(x, 0, 50, 0, Math.PI * 2);
+    ctx.stroke();
+  });
+  ctx.restore();
+}
+
 function drawRotary(cx, cy, scale){
   ctx.save();
   ctx.translate(cx, cy);
@@ -3448,6 +3773,8 @@ function drawRotary(cx, cy, scale){
   roundRect(-250,-135,500,270,32,true,true);
 
   if(state.type === "quasiturbine"){
+    drawRotaryPipes(1, 0);
+    drawRotaryCenterShaft([0], 0);
     ctx.save();
     ctx.translate(0,0);
     ctx.strokeStyle = "#b99a55";
@@ -3491,36 +3818,15 @@ function drawRotary(cx, cy, scale){
 
   const rotors = state.units;
   const spacing = rotors === 1 ? 0 : rotors === 2 ? 110 : rotors === 3 ? 80 : 62;
+  const rotorXs = Array.from({length:rotors}, (_, i) => (i - (rotors - 1) / 2) * spacing);
+  drawRotaryPipes(rotors, spacing);
+  drawRotaryCenterShaft(rotorXs, spacing);
   for(let i=0;i<rotors;i++){
-    const ox = (i - (rotors - 1)/2) * spacing;
+    const ox = rotorXs[i];
     ctx.save();
     ctx.translate(ox,0);
-    ctx.strokeStyle = "#5e7188";
-    ctx.lineWidth = 5;
-    ctx.beginPath();
-    ctx.moveTo(-70,-72);
-    ctx.quadraticCurveTo(0,-116,70,-72);
-    ctx.quadraticCurveTo(116,0,70,72);
-    ctx.quadraticCurveTo(0,116,-70,72);
-    ctx.quadraticCurveTo(-116,0,-70,-72);
-    ctx.closePath();
-    ctx.stroke();
-    ctx.fillStyle = "#1f2a38";
-    ctx.fill();
-
-    ctx.rotate(state.crank * 1.35 + i * .22);
-    ctx.fillStyle = "#d9e1eb";
-    ctx.beginPath();
-    for(let n=0;n<3;n++){
-      const a = n * Math.PI * 2/3 - Math.PI/2;
-      const x = Math.cos(a) * 58;
-      const y = Math.sin(a) * 58;
-      if(n===0) ctx.moveTo(x,y); else ctx.lineTo(x,y);
-    }
-    ctx.closePath();
-    ctx.fill();
-    ctx.strokeStyle = "#ffffff";
-    ctx.stroke();
+    drawRotaryHousing();
+    drawReuleauxRotor(state.crank * 1.35 + i * .22);
 
     if(state.on && getThrottle() > .08){
       ctx.fillStyle = "#facc15";
@@ -4343,7 +4649,7 @@ function clampSceneView(){
 function resetSceneView(){
   state.scenePanX = 0;
   state.scenePanY = 0;
-  state.sceneZoom = .35;
+  state.sceneZoom = DEFAULT_SCENE_ZOOM;
   clampSceneView();
 }
 
@@ -4353,7 +4659,79 @@ function refreshSceneIndicator(){
   const slider = $("sceneZoomSlider");
   if(slider) slider.value = String(Math.round(state.sceneZoom * 100));
   const d = $("sceneDefaultLabel");
-  if(d) d.textContent = "35%";
+  if(d) d.textContent = `${Math.round(DEFAULT_SCENE_ZOOM * 100)}%`;
+}
+
+function drawFuelDeliveryVisual(cx, cy, scale){
+  const cfg = getConfig();
+  if(!fuelSystemApplies(cfg)) return;
+  const isAircraftFuel = ["turbofan","geared_turbofan","turboprop"].includes(state.type);
+  const isCarb = state.fuelSystem === "carburetor";
+  ctx.save();
+  ctx.translate(cx, cy);
+  ctx.scale(scale, scale);
+  const x = isAircraftFuel ? -88 : (cfg.family === "rotary" ? -188 : -230);
+  const y = isAircraftFuel ? -42 : -148;
+
+  ctx.lineCap = "round";
+  ctx.lineJoin = "round";
+  ctx.strokeStyle = "#60a5fa";
+  ctx.lineWidth = 4;
+  ctx.beginPath();
+  ctx.moveTo(x - 46, y - 24);
+  ctx.quadraticCurveTo(x - 8, y - 54, x + 34, y - 18);
+  ctx.stroke();
+
+  if(isCarb){
+    const grad = ctx.createLinearGradient(x - 34, y - 32, x + 34, y + 42);
+    grad.addColorStop(0, "#e5e7eb");
+    grad.addColorStop(.5, "#64748b");
+    grad.addColorStop(1, "#1f2937");
+    ctx.fillStyle = grad;
+    ctx.strokeStyle = "#cbd5e1";
+    ctx.lineWidth = 2.5;
+    roundRect(x - 34, y - 24, 68, 52, 8, true, true);
+    ctx.fillStyle = "#0f172a";
+    ctx.beginPath();
+    ctx.ellipse(x, y - 26, 30, 10, 0, 0, Math.PI * 2);
+    ctx.fill();
+    ctx.strokeStyle = "#facc15";
+    ctx.lineWidth = 3;
+    ctx.beginPath();
+    ctx.moveTo(x - 20, y + 34);
+    ctx.lineTo(x + 20, y + 34);
+    ctx.stroke();
+    ctx.fillStyle = "#fde68a";
+    ctx.font = "bold 10px system-ui";
+    ctx.textAlign = "center";
+    ctx.fillText("CARB", x, y + 50);
+  }else{
+    ctx.strokeStyle = "#dbeafe";
+    ctx.lineWidth = 5;
+    ctx.beginPath();
+    ctx.moveTo(x - 44, y);
+    ctx.lineTo(x + 54, y);
+    ctx.stroke();
+    const count = isAircraftFuel ? 4 : 3;
+    for(let i=0;i<count;i++){
+      const ix = x - 32 + i * (86 / Math.max(1, count - 1));
+      ctx.fillStyle = "#e5e7eb";
+      ctx.strokeStyle = "#1e293b";
+      ctx.lineWidth = 2;
+      roundRect(ix - 7, y - 8, 14, 34, 5, true, true);
+      ctx.strokeStyle = "#f97316";
+      ctx.lineWidth = 2.5;
+      ctx.beginPath();
+      ctx.moveTo(ix, y + 28);
+      ctx.quadraticCurveTo(ix + 7, y + 42, ix + 18, y + 50);
+      ctx.stroke();
+    }
+    ctx.fillStyle = "#bfdbfe";
+    ctx.font = "bold 10px system-ui";
+    ctx.textAlign = "center";
+    ctx.fillText("INJ", x + 5, y - 14);
+  }
+  ctx.restore();
 }
 
 function draw(){
@@ -4406,6 +4784,7 @@ function draw(){
   }
 
   drawEngineCover(sceneCX, sceneCY, drawScale);
+  drawFuelDeliveryVisual(sceneCX, sceneCY, drawScale);
   drawGearboxAssembly(sceneCX, sceneCY, drawScale);
 
   ctx.save();
@@ -4608,6 +4987,9 @@ function updateUI(){
   if($("soundVolume")) $("soundVolume").value = state.soundVolume ?? 70;
   if($("soundMode")) $("soundMode").value = state.soundMode || "auto";
   if($("dynoGraphMode")) $("dynoGraphMode").value = state.dynoGraphMode || "powerTorque";
+  normalizeFuelSystem();
+  if($("fuelSystem")) $("fuelSystem").value = state.fuelSystem;
+  if($("fuelSystemOut")) $("fuelSystemOut").textContent = fuelSystemLabel();
 
   updateReadoutLabels();
   updateBuildStats(cfg);
@@ -4619,8 +5001,8 @@ function updateUI(){
   $("configLabel").textContent = `${cfg.units.name}: ${formatValue(state.units)}`;
   $("rpmOut").textContent = Math.round(state.rpm);
   $("gearOut").textContent = transmissionApplies(cfg) ? gearDisplayLabel() : "—";
-  $("speedOut").textContent = `${Math.round(state.speed)} km/h`;
-  $("transmissionLabel").textContent = cfg.family === "jet" ? `Aircraft · ${Math.round(state.speed)} km/h` : transmissionApplies(cfg) ? `${state.transmissionMode === "auto" ? "A" : "M"}${gearDisplayLabel()} · ${Math.round(state.speed)} km/h` : "Direct drive";
+  $("speedOut").textContent = speedDisplayText();
+  $("transmissionLabel").textContent = cfg.family === "jet" ? `Aircraft · ${speedDisplayText()}` : transmissionApplies(cfg) ? `${state.transmissionMode === "auto" ? "A" : "M"}${gearDisplayLabel()} · ${speedDisplayText()}` : "Direct drive";
 
   if(cfg.family === "jet"){
     $("outputOut").textContent = `${state.output.toFixed(1)} kN`;
@@ -4652,6 +5034,13 @@ function updateUI(){
   if($("tireSizeOut")) $("tireSizeOut").textContent = `${Math.round(state.tireSize || 20)} in`;
   if($("tireType") && $("tireType").value !== state.tireType) $("tireType").value = state.tireType;
   if($("rimStyle") && $("rimStyle").value !== state.rimStyle) $("rimStyle").value = state.rimStyle;
+  normalizeSpeedLimiter();
+  if($("speedLimitOut")) $("speedLimitOut").textContent = `${state.speedLimitKmh} km/h`;
+  if($("speedLimitKmh") && +$("speedLimitKmh").value !== state.speedLimitKmh) $("speedLimitKmh").value = state.speedLimitKmh;
+  if($("speedLimiterBtn")){
+    $("speedLimiterBtn").textContent = state.speedLimiterEnabled ? (state.speedLimiterActive ? "Electronic speed limiter active" : "Electronic speed limiter on") : "Electronic speed limiter off";
+    $("speedLimiterBtn").classList.toggle("active", state.speedLimiterEnabled);
+  }
   if($("gaugeDisplayMode") && $("gaugeDisplayMode").value !== (state.gaugeDisplayMode || "analog")) $("gaugeDisplayMode").value = state.gaugeDisplayMode || "analog";
   if($("gaugeStyle") && $("gaugeStyle").value !== (state.gaugeStyle || "classic")) $("gaugeStyle").value = state.gaugeStyle || "classic";
   $("dispOut").textContent = `${state.displacement.toFixed(1)} L`;
@@ -4696,6 +5085,8 @@ function updateUI(){
     $("warning").textContent = "Warning: high exhaust gas temperature.";
   } else if(state.rpm > state.revLimit * .96){
     $("warning").textContent = "Warning: near rev / spool limiter.";
+  } else if(state.speedLimiterActive){
+    $("warning").textContent = `Electronic speed limiter active at ${state.speedLimitKmh} km/h.`;
   } else if(!state.dyno){
     if(!$("warning").textContent.startsWith("Dyno complete")) $("warning").textContent = "";
   }
@@ -4827,6 +5218,7 @@ function setup(){
     if(!item) return;
     applyDiscoveredEngineByName(item.dataset.profileName);
   };
+  if($("fuelSystem")) $("fuelSystem").onchange = e => { state.fuelSystem = e.target.value; updateUI(); };
   $("engineCover").onchange = e => { state.engineCover = e.target.value; updateUI(); };
   $("exhaustManifold").onchange = e => { state.exhaustManifold = e.target.value; updateUI(); };
   $("intakePipeOffset").oninput = e => { state.intakePipeOffset = +e.target.value; updateUI(); };
@@ -4850,6 +5242,8 @@ function setup(){
   $("tireType").onchange = e => { state.tireType = e.target.value; updateUI(); };
   $("tireSize").oninput = e => { state.tireSize = +e.target.value; updateUI(); };
   $("rimStyle").onchange = e => { state.rimStyle = e.target.value; updateUI(); };
+  if($("speedLimiterBtn")) $("speedLimiterBtn").onclick = () => { state.speedLimiterEnabled = !state.speedLimiterEnabled; if(!state.speedLimiterEnabled) state.speedLimiterActive = false; beep(state.speedLimiterEnabled ? 680 : 260, .04, "triangle", .025); updateUI(); };
+  if($("speedLimitKmh")) $("speedLimitKmh").oninput = e => { state.speedLimitKmh = +e.target.value; normalizeSpeedLimiter(); updateUI(); };
   $("gaugeStyle").onchange = e => { state.gaugeStyle = e.target.value; applyGaugeStyle(); updateUI(); };
   $("gaugeDisplayMode").onchange = e => { state.gaugeDisplayMode = e.target.value; applyGaugeDisplayMode(); updateUI(); };
   $("systemPower").oninput = e => { state.systemPower = +e.target.value; updateUI(); };
@@ -5025,9 +5419,9 @@ function setup(){
     Object.assign(state, {
       on:false, type:"v", units:8, displacement:4.0, compression:10.0, extra1:0, extra2:0,
       afterburner:false, throttle:0, gas:false, clutch:false, brake:false, load:35,
-      fuel:1.0, timing:0, revLimit:7000, rpm:0, temp:20, output:0, power:0, aux:0, crank:0,
+      fuel:1.0, fuelSystem:"injection", timing:0, revLimit:7000, rpm:0, temp:20, output:0, power:0, aux:0, crank:0,
       speed:0, gear:1, gearSelector:"P", shiftBlockedReason:"", lastShiftTime:0, shiftFromGear:1, gearCount:7, transmissionMode:"auto", transmissionType:"dct", launchControl:false, finalDrive:3.42, gearboxAnimation:true, starterTimer:0, shiftTimer:0, shiftDuration:0, virtualRatio:0, noteOpen:false, graphVisible:true, dynoGraphMode:"powerTorque", soundMode:"auto", soundVolume:70, raceResults:[], engineCover:"none", exhaustManifold:"equal_length_headers", intakePipeOffset:0, exhaustPipeOffset:0, pipesVisible:true,
-      dyno:false, dynoRpm:1000, dynoData:[], turboAddon:"none", hybridSystem:"none", nuclearFission:"none", secondaryEngine:"none", systemPower:50, fuelTanks:true, scenePanX:0, scenePanY:0, sceneZoom:.35, overlayMinimized:false, ecoMode:false, lastMatchedProfile:null, vehicleDrive:"rwd", bodyType:"coupe", spoilerPackage:"none", tireType:"street", tireSize:20, rimStyle:"alloy", gaugeStyle:"classic", gaugeDisplayMode:"analog", panelMinimized:false, mobileMode:false, experienceMode:"advanced", buildStats:makeEmptyBuildStats()
+      dyno:false, dynoRpm:1000, dynoData:[], turboAddon:"none", hybridSystem:"none", nuclearFission:"none", secondaryEngine:"none", systemPower:50, fuelTanks:true, scenePanX:0, scenePanY:0, sceneZoom:DEFAULT_SCENE_ZOOM, overlayMinimized:true, ecoMode:false, lastMatchedProfile:null, vehicleDrive:"rwd", bodyType:"coupe", spoilerPackage:"none", tireType:"street", tireSize:20, rimStyle:"alloy", speedLimiterEnabled:false, speedLimitKmh:120, speedLimiterActive:false, gaugeStyle:"classic", gaugeDisplayMode:"analog", panelMinimized:false, mobileMode:false, experienceMode:"advanced", buildStats:makeEmptyBuildStats()
     });
     stopAudio();
     $("throttleSlider").value = 0;
@@ -5045,7 +5439,7 @@ function setup(){
     $("gearCount").value = 7;
     $("finalDrive").value = 3.42;
     $("transmissionType").value = "dct";
-    $("turboAddon").value = "none"; $("hybridSystem").value = "none"; $("nuclearFission").value = "none"; $("secondaryEngine").value = "none"; $("systemPower").value = 50; $("vehicleDrive").value = "rwd"; $("bodyType").value = "coupe"; $("spoilerPackage").value = "none"; $("engineCover").value = "none"; $("exhaustManifold").value = "equal_length_headers"; $("intakePipeOffset").value = 0; $("exhaustPipeOffset").value = 0; if($("pipesVisibleBtn")) $("pipesVisibleBtn").classList.add("active");
+    if($("fuelSystem")) $("fuelSystem").value = "injection"; $("turboAddon").value = "none"; $("hybridSystem").value = "none"; $("nuclearFission").value = "none"; $("secondaryEngine").value = "none"; $("systemPower").value = 50; $("vehicleDrive").value = "rwd"; $("bodyType").value = "coupe"; $("spoilerPackage").value = "none"; if($("speedLimitKmh")) $("speedLimitKmh").value = 120; $("engineCover").value = "none"; $("exhaustManifold").value = "equal_length_headers"; $("intakePipeOffset").value = 0; $("exhaustPipeOffset").value = 0; if($("pipesVisibleBtn")) $("pipesVisibleBtn").classList.add("active");
     ["clutch","brake","gas","sceneClutchBtn","sceneBrakeBtn","sceneGasBtn"].forEach(id => { const el=$(id); if(el) el.classList.remove("down"); });
     applyTypeDefaults("v");
   };

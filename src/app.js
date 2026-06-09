@@ -98,12 +98,16 @@ const state = {
   gearSelector:"P",
   shiftBlockedReason:"",
   lastShiftTime:0,
+  shiftFromGear:1,
   gearCount:7,
   transmissionMode:"auto",
   transmissionType:"dct",
   launchControl:false,
   finalDrive:3.42,
+  gearboxAnimation:true,
+  starterTimer:0,
   shiftTimer:0,
+  shiftDuration:0,
   virtualRatio:0,
   noteOpen:false,
   graphVisible:true,
@@ -284,7 +288,7 @@ function soundProfile(mode=getEffectiveSoundMode()){
 }
 
 function captureBuildState(){
-  const keys = ["type","units","displacement","compression","extra1","extra2","revLimit","turboAddon","hybridSystem","nuclearFission","secondaryEngine","systemPower","fuelTanks","vehicleDrive","bodyType","spoilerPackage","tireType","tireSize","rimStyle","gear","gearSelector","gearCount","transmissionMode","transmissionType","finalDrive","gaugeStyle","gaugeDisplayMode","engineCover","exhaustManifold","intakePipeOffset","exhaustPipeOffset","pipesVisible","soundMode","soundVolume"];
+  const keys = ["type","units","displacement","compression","extra1","extra2","revLimit","turboAddon","hybridSystem","nuclearFission","secondaryEngine","systemPower","fuelTanks","vehicleDrive","bodyType","spoilerPackage","tireType","tireSize","rimStyle","gear","gearSelector","gearCount","transmissionMode","transmissionType","finalDrive","gearboxAnimation","gaugeStyle","gaugeDisplayMode","engineCover","exhaustManifold","intakePipeOffset","exhaustPipeOffset","pipesVisible","soundMode","soundVolume"];
   const build = {};
   keys.forEach(k => build[k] = state[k]);
   return build;
@@ -836,6 +840,8 @@ function syncInputsToState(){
   if($("intakePipeOffset")) $("intakePipeOffset").value = state.intakePipeOffset || 0;
   if($("exhaustPipeOffset")) $("exhaustPipeOffset").value = state.exhaustPipeOffset || 0;
   if(typeof state.pipesVisible !== "boolean") state.pipesVisible = true;
+  if(typeof state.gearboxAnimation !== "boolean") state.gearboxAnimation = true;
+  if(typeof state.starterTimer !== "number") state.starterTimer = 0;
 
   if(cfg.extra1){
     $("extra1").min = cfg.extra1.min;
@@ -1046,7 +1052,9 @@ function resetTransmissionForType(){
   state.gear = transmissionApplies(cfg) ? 1 : 0;
   state.gearSelector = transmissionApplies(cfg) ? "P" : "N";
   state.shiftBlockedReason = "";
+  state.shiftFromGear = state.gear || 1;
   state.shiftTimer = 0;
+  state.shiftDuration = 0;
   state.speed = 0;
   state.virtualRatio = setup.ratios[1] || 1;
 }
@@ -1094,10 +1102,15 @@ function setSelector(selector, opts={}){
     setShiftBlocked("Select N first");
     return false;
   }
+  const fromGear = state.gear > 0 ? state.gear : (state.shiftFromGear || 1);
   state.gearSelector = selector;
   if(selector === "D" && state.gear < 1) state.gear = 1;
   if(selector === "P" || selector === "N" || selector === "R") state.gear = selector === "R" ? -1 : 0;
-  state.shiftTimer = selector === current ? state.shiftTimer : (state.transmissionType === "dct" ? .12 : .28);
+  if(selector !== current){
+    state.shiftFromGear = fromGear;
+    state.shiftDuration = state.transmissionType === "dct" ? .12 : .28;
+    state.shiftTimer = state.shiftDuration;
+  }
   state.lastShiftTime = performance.now ? performance.now() : Date.now();
   state.shiftBlockedReason = "";
   beep(selector === "R" ? 260 : selector === "P" ? 220 : 420, .045, "triangle", .025);
@@ -1126,10 +1139,12 @@ function shiftTo(newGear){
   const target = Math.max(1, Math.min(maxGear, newGear));
   if(target === state.gear) return;
   const old = state.gear;
+  state.shiftFromGear = old > 0 ? old : 1;
   state.gear = target;
   state.gearSelector = "D";
   state.shiftBlockedReason = "";
-  state.shiftTimer = state.transmissionType === "dct" ? .16 : .48;
+  state.shiftDuration = state.transmissionType === "dct" ? .16 : .48;
+  state.shiftTimer = state.shiftDuration;
   state.lastShiftTime = performance.now ? performance.now() : Date.now();
   beep(target > old ? 520 : 320, .05, "triangle", .03);
 }
@@ -1421,7 +1436,6 @@ function applyDrivetrain(engineTorque, idle, freeTargetRpm, dt){
     return;
   }
 
-  const setup = getGearSetup(cfg);
   const selector = normalizeGearSelector();
   if(selector === "P"){
     state.speed += (0 - state.speed) * Math.min(1, dt * 10);
@@ -1526,6 +1540,18 @@ function refreshTransmissionControls(){
     $("gearCount").disabled = !enabled;
     $("gearCount").value = Math.max(1, Math.min(10, Math.round(state.gearCount || maxGear)));
     $("gearCountOut").textContent = $("gearCount").value;
+  }
+  if($("gearboxAnimationBtn")){
+    $("gearboxAnimationBtn").classList.toggle("active", state.gearboxAnimation !== false);
+    $("gearboxAnimationBtn").textContent = state.gearboxAnimation === false ? "Gearbox animation off" : "Gearbox animation on";
+    $("gearboxAnimationBtn").disabled = !enabled;
+  }
+  if($("gearboxAnimationOut")){
+    const pairCount = Math.max(1, Math.min(10, Math.round(state.gearCount || 7)));
+    const activeGear = selector === "D" ? `gear ${Math.max(1, Math.min(pairCount, state.gear || 1))}` : selector;
+    $("gearboxAnimationOut").textContent = enabled
+      ? `Flywheel, starter, shafts, and ${pairCount} gear pair${pairCount === 1 ? "" : "s"} visible. Active: ${activeGear}.`
+      : "Direct-drive engines hide the road gearbox animation.";
   }
   $("finalDriveOut").textContent = `${state.finalDrive.toFixed(2)}:1`;
   $("transmissionNoteToggle").classList.toggle("active", state.noteOpen);
@@ -1632,6 +1658,14 @@ function jetThrust(type, spoolNorm){
 function physics(dt){
   const cfg = getConfig();
   const th = getThrottle();
+  const idleRpm = engineIdleRpm(cfg);
+  if(state.on && state.starterTimer > 0 && idleRpm > 0){
+    state.rpm += (idleRpm * .82 - state.rpm) * .045;
+    if(state.rpm >= idleRpm * .94) state.starterTimer = 0;
+    else state.starterTimer = Math.max(0, state.starterTimer - dt);
+  }else if(state.starterTimer > 0){
+    state.starterTimer = Math.max(0, state.starterTimer - dt);
+  }
 
   if(!state.on){
     state.rpm += (0 - state.rpm) * .10;
@@ -1849,6 +1883,315 @@ function roundRect(x,y,w,h,r,fill,stroke){
   ctx.arcTo(x,y,x+w,y,r);
   if(fill) ctx.fill();
   if(stroke) ctx.stroke();
+}
+
+function drawToothedGear(x, y, radius, teeth, angle, fill, stroke, label, active=false){
+  const outer = radius + Math.max(2.2, radius * .13);
+  ctx.save();
+  ctx.translate(x, y);
+  ctx.rotate(angle);
+  ctx.beginPath();
+  const steps = Math.max(10, teeth * 2);
+  for(let i=0;i<steps;i++){
+    const a = i * Math.PI * 2 / steps;
+    const r = i % 2 === 0 ? outer : radius;
+    const px = Math.cos(a) * r;
+    const py = Math.sin(a) * r;
+    if(i === 0) ctx.moveTo(px, py); else ctx.lineTo(px, py);
+  }
+  ctx.closePath();
+  if(active){
+    ctx.shadowColor = "rgba(216,191,122,.8)";
+    ctx.shadowBlur = 14;
+  }
+  ctx.fillStyle = fill;
+  ctx.strokeStyle = stroke;
+  ctx.lineWidth = active ? 3 : 2;
+  ctx.fill();
+  ctx.stroke();
+  ctx.shadowBlur = 0;
+
+  ctx.strokeStyle = "rgba(255,255,255,.72)";
+  ctx.lineWidth = Math.max(1.2, radius * .075);
+  const spokes = radius > 18 ? 6 : 4;
+  for(let i=0;i<spokes;i++){
+    ctx.rotate(Math.PI * 2 / spokes);
+    ctx.beginPath();
+    ctx.moveTo(radius * .22, 0);
+    ctx.lineTo(radius * .78, 0);
+    ctx.stroke();
+  }
+  ctx.fillStyle = active ? "#f8e7a5" : "#cbd5e1";
+  ctx.beginPath();
+  ctx.arc(0, 0, radius * .30, 0, Math.PI * 2);
+  ctx.fill();
+  ctx.strokeStyle = "rgba(20,28,38,.9)";
+  ctx.lineWidth = 1.5;
+  ctx.stroke();
+  ctx.restore();
+
+  if(label){
+    ctx.fillStyle = active ? "#f8e7a5" : "#9fb0c2";
+    ctx.font = "bold 10px system-ui";
+    ctx.textAlign = "center";
+    ctx.fillText(label, x, y - radius - 12);
+    ctx.textAlign = "start";
+  }
+}
+
+function toothedOuterRadius(radius){
+  return radius + Math.max(2.2, radius * .13);
+}
+
+function drawSmoothWheel(x, y, radius, angle, fill, stroke, label, active=false){
+  ctx.save();
+  ctx.translate(x, y);
+  ctx.rotate(angle);
+  if(active){
+    ctx.shadowColor = "rgba(216,191,122,.62)";
+    ctx.shadowBlur = 12;
+  }
+  ctx.fillStyle = fill;
+  ctx.strokeStyle = stroke;
+  ctx.lineWidth = active ? 3 : 2;
+  ctx.beginPath();
+  ctx.arc(0, 0, radius, 0, Math.PI * 2);
+  ctx.fill();
+  ctx.stroke();
+  ctx.shadowBlur = 0;
+
+  ctx.strokeStyle = "rgba(255,255,255,.58)";
+  ctx.lineWidth = Math.max(1.4, radius * .08);
+  for(let i=0;i<6;i++){
+    ctx.rotate(Math.PI / 3);
+    ctx.beginPath();
+    ctx.moveTo(radius * .22, 0);
+    ctx.lineTo(radius * .82, 0);
+    ctx.stroke();
+  }
+  ctx.fillStyle = active ? "#f8e7a5" : "#cbd5e1";
+  ctx.beginPath();
+  ctx.arc(0, 0, radius * .24, 0, Math.PI * 2);
+  ctx.fill();
+  ctx.restore();
+
+  if(label){
+    ctx.fillStyle = active ? "#f8e7a5" : "#9fb0c2";
+    ctx.font = "bold 10px system-ui";
+    ctx.textAlign = "center";
+    ctx.fillText(label, x, y + radius + 16);
+    ctx.textAlign = "start";
+  }
+}
+
+function engineIdleRpm(cfg=getConfig()){
+  if(cfg.family === "piston") return state.type === "radial" ? 700 : 820;
+  if(cfg.family === "rotary") return 1100;
+  if(cfg.family === "electric") return 0;
+  if(cfg.family === "external") return 200;
+  if(cfg.family === "linear" || cfg.family === "hydraulic") return 500;
+  if(cfg.family === "jet") return state.type === "turboprop" ? 1200 : 2200;
+  return 800;
+}
+
+function drawGearboxAssembly(cx, cy, scale){
+  const cfg = getConfig();
+  if(!transmissionApplies(cfg) || state.gearboxAnimation === false) return;
+
+  const gearCount = Math.max(1, Math.min(10, Math.round(state.gearCount || 7)));
+  const setup = getGearSetup(cfg);
+  const selector = normalizeGearSelector();
+  const activeGear = selector === "D" ? Math.max(1, Math.min(gearCount, state.gear || 1)) : 0;
+  const idleRpm = engineIdleRpm(cfg);
+  const starterActive = (state.starterTimer || 0) > 0 && idleRpm > 0 && state.rpm < idleRpm * .96;
+  const now = typeof performance !== "undefined" ? performance.now() / 1000 : Date.now() / 1000;
+  const inputAngle = state.crank + (starterActive ? now * 18 : 0);
+  const outputRatio = selector === "D"
+    ? Math.max(.16, Math.abs(currentGearRatio()) / Math.max(1, state.finalDrive))
+    : selector === "R" ? .38 : .12;
+  const outputAngle = selector === "R" ? -state.crank * outputRatio : state.crank * outputRatio;
+
+  ctx.save();
+  ctx.translate(cx, cy);
+  ctx.scale(scale, scale);
+
+  const shaftY = 80;
+  const boxX = 342;
+  const boxY = -44;
+  const boxW = 396;
+  const boxH = 260;
+  const gearR = Math.max(13.5, Math.min(22, (boxW - 96) / Math.max(2, gearCount * 2.26)));
+  const smallGearR = gearR * .56;
+  const largeGearR = gearR * 1.32;
+  const maxGearOuter = toothedOuterRadius(largeGearR);
+  const selectorR = Math.max(8.5, gearR * .48);
+  const selectorOuter = toothedOuterRadius(selectorR);
+  const rowGap = toothedOuterRadius(smallGearR) + toothedOuterRadius(largeGearR) + selectorOuter * 1.75;
+  const inputY = shaftY;
+  const outputY = inputY + rowGap;
+  const midY = (inputY + outputY) * .5;
+  const gearStep = maxGearOuter * 2 - 1.2;
+  const rowSpan = gearStep * (gearCount - 1);
+  const left = boxX + (boxW - rowSpan) * .5;
+  const gearRadiusAt = (i, topRow=true) => {
+    const t = gearCount <= 1 ? .5 : (i - 1) / (gearCount - 1);
+    const grow = topRow ? t : 1 - t;
+    return smallGearR + (largeGearR - smallGearR) * grow;
+  };
+
+  ctx.strokeStyle = "#d7dee9";
+  ctx.lineWidth = 9;
+  ctx.beginPath();
+  ctx.moveTo(218, shaftY);
+  ctx.lineTo(boxX + boxW + 54, shaftY);
+  ctx.stroke();
+  ctx.strokeStyle = "rgba(136,153,171,.8)";
+  ctx.lineWidth = 3;
+  ctx.beginPath();
+  ctx.moveTo(220, shaftY + 10);
+  ctx.lineTo(boxX + boxW + 46, shaftY + 10);
+  ctx.stroke();
+
+  ctx.save();
+  ctx.translate(284, shaftY);
+  ctx.rotate(inputAngle);
+  drawToothedGear(0, 0, 42, 28, 0, "#303946", "#d8bf7a", "", starterActive);
+  ctx.strokeStyle = "#f8ecd0";
+  ctx.lineWidth = 5;
+  for(let i=0;i<6;i++){
+    ctx.rotate(Math.PI / 3);
+    ctx.beginPath();
+    ctx.moveTo(0, 0);
+    ctx.lineTo(34, 0);
+    ctx.stroke();
+  }
+  ctx.restore();
+
+  ctx.fillStyle = "#d8bf7a";
+  ctx.font = "bold 10px system-ui";
+  ctx.fillText("FLYWHEEL", 254, 134);
+
+  ctx.fillStyle = "#17212d";
+  ctx.strokeStyle = starterActive ? "#facc15" : "#64748b";
+  ctx.lineWidth = 2;
+  roundRect(224, 142, 108, 42, 17, true, true);
+  ctx.fillStyle = starterActive ? "#fef3c7" : "#9fb0c2";
+  ctx.font = "bold 11px system-ui";
+  ctx.fillText(starterActive ? "STARTER ENGAGED" : "STARTER MOTOR", 234, 168);
+  drawToothedGear(310, 130, 13, 12, starterActive ? -now * 42 : -state.crank * .35, "#475569", starterActive ? "#facc15" : "#94a3b8", "", starterActive);
+  if(starterActive){
+    ctx.strokeStyle = "rgba(250,204,21,.72)";
+    ctx.lineWidth = 4;
+    ctx.beginPath();
+    ctx.moveTo(302, 120);
+    ctx.lineTo(292, 96);
+    ctx.stroke();
+  }
+
+  ctx.fillStyle = "#111821";
+  ctx.strokeStyle = "#344255";
+  ctx.lineWidth = 4;
+  roundRect(boxX, boxY, boxW, boxH, 24, true, true);
+  ctx.fillStyle = "rgba(255,255,255,.05)";
+  roundRect(boxX + 10, boxY + 10, boxW - 20, boxH - 20, 18, true, false);
+
+  ctx.strokeStyle = "#d7dee9";
+  ctx.lineWidth = 7;
+  ctx.beginPath();
+  ctx.moveTo(boxX + 20, inputY);
+  ctx.lineTo(boxX + boxW - 26, inputY);
+  ctx.moveTo(boxX + 20, outputY);
+  ctx.lineTo(boxX + boxW + 74, outputY);
+  ctx.stroke();
+  ctx.strokeStyle = "#64748b";
+  ctx.lineWidth = 2;
+  ctx.beginPath();
+  ctx.moveTo(boxX + 20, inputY + 8);
+  ctx.lineTo(boxX + boxW - 26, inputY + 8);
+  ctx.moveTo(boxX + 20, outputY + 8);
+  ctx.lineTo(boxX + boxW + 74, outputY + 8);
+  ctx.stroke();
+
+  for(let i=1;i<=gearCount;i++){
+    const x = left + (i - 1) * gearStep;
+    const engaged = i === activeGear && selector === "D";
+    const spinMult = engaged ? outputRatio : .22 + i * .015;
+    const topR = gearRadiusAt(i, true);
+    const bottomR = gearRadiusAt(i, false);
+    drawToothedGear(x, inputY, topR, Math.round(12 + topR * .72), inputAngle * spinMult + i * .18, engaged ? "#b99a55" : "#2d3745", engaged ? "#f8e7a5" : "#94a3b8", String(i), engaged);
+    drawToothedGear(x, outputY, bottomR, Math.round(12 + bottomR * .72), -outputAngle * (engaged ? 1.25 : .35) - i * .21, engaged ? "#d8bf7a" : "#273241", engaged ? "#f8e7a5" : "#7f90a5", "", engaged);
+    if(engaged){
+      ctx.fillStyle = "#f8e7a5";
+      roundRect(x - 15, midY - 8, 30, 16, 6, true, false);
+    }
+  }
+  const targetRunnerGear = selector === "D"
+    ? activeGear
+    : selector === "R"
+      ? 1
+      : Math.max(1, Math.min(gearCount, state.shiftFromGear || 1));
+  const fromRunnerGear = Math.max(1, Math.min(gearCount, state.shiftFromGear || targetRunnerGear));
+  const shiftDuration = Math.max(.01, state.shiftDuration || (state.transmissionType === "dct" ? .16 : .48));
+  const shiftProgress = state.shiftTimer > 0
+    ? 1 - Math.max(0, Math.min(1, state.shiftTimer / shiftDuration))
+    : 1;
+  const easedShift = shiftProgress * shiftProgress * (3 - 2 * shiftProgress);
+  const runnerIndex = fromRunnerGear + (targetRunnerGear - fromRunnerGear) * easedShift;
+  const runnerT = Math.max(0, Math.min(gearCount - 1, runnerIndex - 1));
+  const runnerX = left + runnerT * gearStep;
+  const runnerActive = selector === "D" || selector === "R";
+  ctx.strokeStyle = "rgba(148,163,184,.35)";
+  ctx.lineWidth = 3;
+  ctx.beginPath();
+  ctx.moveTo(left, midY);
+  ctx.lineTo(left + rowSpan, midY);
+  ctx.stroke();
+  drawToothedGear(
+    runnerX,
+    midY,
+    selectorR,
+    Math.round(10 + selectorR * .9),
+    runnerActive ? -inputAngle * Math.max(.55, outputRatio) : -inputAngle * .25,
+    runnerActive ? "#f59e0b" : "#475569",
+    runnerActive ? "#f8e7a5" : "#94a3b8",
+    "",
+    runnerActive
+  );
+
+  if(selector === "R"){
+    drawToothedGear(left - gearStep * .55, midY, selectorR, Math.round(10 + selectorR * .9), -inputAngle * .65, "#78350f", "#fb923c", "R", true);
+  }
+  if(selector === "P"){
+    ctx.fillStyle = "#ef4444";
+    roundRect(boxX + 20, inputY - 26, 24, 52, 5, true, false);
+    ctx.fillStyle = "#fee2e2";
+    ctx.font = "bold 10px system-ui";
+    ctx.fillText("PARK PAWL", boxX + 50, inputY - 10);
+  }
+
+  const diffX = boxX + boxW + 68;
+  const finalSmallR = Math.max(14, Math.min(20, rowGap * .30));
+  const finalLargeR = Math.max(28, rowGap - finalSmallR);
+  drawSmoothWheel(diffX, inputY, finalSmallR, outputAngle * 1.4, "#273241", "#93c5fd", "", selector === "D" || selector === "R");
+  drawSmoothWheel(diffX, inputY + finalSmallR + finalLargeR, finalLargeR, -outputAngle * .72, "#1f2937", "#d8bf7a", "", selector === "D" || selector === "R");
+  ctx.strokeStyle = "#cbd5e1";
+  ctx.lineWidth = 5;
+  ctx.beginPath();
+  ctx.moveTo(diffX + finalLargeR, inputY + finalSmallR + finalLargeR);
+  ctx.lineTo(diffX + finalLargeR + 58, inputY + finalSmallR + finalLargeR - 18);
+  ctx.moveTo(diffX + finalLargeR, inputY + finalSmallR + finalLargeR);
+  ctx.lineTo(diffX + finalLargeR + 58, inputY + finalSmallR + finalLargeR + 18);
+  ctx.stroke();
+
+  ctx.fillStyle = "#bfdbfe";
+  ctx.font = "bold 12px system-ui";
+  ctx.fillText(`${gearCount}-SPEED ${state.transmissionType.toUpperCase()} GEARBOX`, boxX + 18, boxY + 24);
+  ctx.fillStyle = "#9fb0c2";
+  ctx.font = "bold 10px system-ui";
+  ctx.fillText(`selector ${selector}  final ${state.finalDrive.toFixed(2)}:1`, boxX + 18, boxY + boxH - 18);
+  ctx.fillText("FINAL DRIVE", diffX - 30, outputY + 56);
+
+  ctx.restore();
 }
 
 
@@ -4063,6 +4406,7 @@ function draw(){
   }
 
   drawEngineCover(sceneCX, sceneCY, drawScale);
+  drawGearboxAssembly(sceneCX, sceneCY, drawScale);
 
   ctx.save();
   ctx.translate(sceneCX, sceneCY);
@@ -4566,6 +4910,7 @@ function setup(){
     refreshTransmissionControls();
   };
   $("transmissionType").onchange = e => { state.transmissionType = e.target.value; if(state.transmissionType === "cvt") state.transmissionMode = "auto"; if(state.gearSelector === "D" && state.gear < 1) state.gear = 1; refreshTransmissionControls(); };
+  if($("gearboxAnimationBtn")) $("gearboxAnimationBtn").onclick = () => { state.gearboxAnimation = state.gearboxAnimation === false ? true : false; refreshTransmissionControls(); };
   $("launchBtn").onclick = () => { state.launchControl = !state.launchControl; beep(state.launchControl ? 820 : 300, .05, "triangle", .03); refreshTransmissionControls(); };
   $("shortcutAuto").onclick = setAutoMode;
   $("shortcutManual").onclick = setManualMode;
@@ -4587,10 +4932,13 @@ function setup(){
   $("startBtn").onclick = () => {
     state.on = !state.on;
     if(state.on){
+      const cfg = getConfig();
+      state.starterTimer = engineIdleRpm(cfg) > 0 ? 1.25 : 0;
       beep(160, .12, "sawtooth", .08);
       startAudio();
-      state.rpm = Math.max(state.rpm, getConfig().family === "jet" ? 2200 : getConfig().family === "electric" ? 0 : 820);
+      state.rpm = Math.max(state.rpm, cfg.family === "jet" ? 180 : cfg.family === "electric" ? 0 : 90);
     }else{
+      state.starterTimer = 0;
       beep(120, .12, "sine", .04);
       stopAudio();
     }
@@ -4678,7 +5026,7 @@ function setup(){
       on:false, type:"v", units:8, displacement:4.0, compression:10.0, extra1:0, extra2:0,
       afterburner:false, throttle:0, gas:false, clutch:false, brake:false, load:35,
       fuel:1.0, timing:0, revLimit:7000, rpm:0, temp:20, output:0, power:0, aux:0, crank:0,
-      speed:0, gear:1, gearSelector:"P", shiftBlockedReason:"", lastShiftTime:0, transmissionMode:"auto", transmissionType:"dct", launchControl:false, finalDrive:3.42, shiftTimer:0, virtualRatio:0, noteOpen:false, graphVisible:true, dynoGraphMode:"powerTorque", soundMode:"auto", soundVolume:70, raceResults:[], engineCover:"none", exhaustManifold:"equal_length_headers", intakePipeOffset:0, exhaustPipeOffset:0, pipesVisible:true,
+      speed:0, gear:1, gearSelector:"P", shiftBlockedReason:"", lastShiftTime:0, shiftFromGear:1, gearCount:7, transmissionMode:"auto", transmissionType:"dct", launchControl:false, finalDrive:3.42, gearboxAnimation:true, starterTimer:0, shiftTimer:0, shiftDuration:0, virtualRatio:0, noteOpen:false, graphVisible:true, dynoGraphMode:"powerTorque", soundMode:"auto", soundVolume:70, raceResults:[], engineCover:"none", exhaustManifold:"equal_length_headers", intakePipeOffset:0, exhaustPipeOffset:0, pipesVisible:true,
       dyno:false, dynoRpm:1000, dynoData:[], turboAddon:"none", hybridSystem:"none", nuclearFission:"none", secondaryEngine:"none", systemPower:50, fuelTanks:true, scenePanX:0, scenePanY:0, sceneZoom:.35, overlayMinimized:false, ecoMode:false, lastMatchedProfile:null, vehicleDrive:"rwd", bodyType:"coupe", spoilerPackage:"none", tireType:"street", tireSize:20, rimStyle:"alloy", gaugeStyle:"classic", gaugeDisplayMode:"analog", panelMinimized:false, mobileMode:false, experienceMode:"advanced", buildStats:makeEmptyBuildStats()
     });
     stopAudio();
@@ -4694,6 +5042,7 @@ function setup(){
     if($("dynoGraphMode")) $("dynoGraphMode").value = "powerTorque";
     $("dynoBtn").classList.remove("active");
     refreshGraphToggle();
+    $("gearCount").value = 7;
     $("finalDrive").value = 3.42;
     $("transmissionType").value = "dct";
     $("turboAddon").value = "none"; $("hybridSystem").value = "none"; $("nuclearFission").value = "none"; $("secondaryEngine").value = "none"; $("systemPower").value = 50; $("vehicleDrive").value = "rwd"; $("bodyType").value = "coupe"; $("spoilerPackage").value = "none"; $("engineCover").value = "none"; $("exhaustManifold").value = "equal_length_headers"; $("intakePipeOffset").value = 0; $("exhaustPipeOffset").value = 0; if($("pipesVisibleBtn")) $("pipesVisibleBtn").classList.add("active");

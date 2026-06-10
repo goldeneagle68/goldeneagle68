@@ -523,6 +523,7 @@
           <button class="shortcut" id="shortcutUp">+ Gear · ]</button>
         </div>
         <button class="btn start" id="startBtn">START ENGINE</button>
+        <button class="btn starter" id="starterBtn">ENGAGE STARTER · V</button>
 
         <label class="label">Throttle: <span id="throttleOut">0%</span>
           <input id="throttleSlider" type="range" min="0" max="100" value="0"/>
@@ -598,7 +599,7 @@
           <span>Transmission note</span><b id="transmissionNoteArrow">⌄</b>
         </button>
         <p id="transmissionNote" class="noteBody">
-          Keyboard shortcuts: Space starts/stops engine, W or ↑ holds gas, S or ↓ holds brake, C holds clutch, A toggles auto, M toggles manual, [ shifts down, ] shifts up, P requests Park, and L toggles launch control.
+          Keyboard shortcuts: Space starts/stops engine, hold V for 2 seconds to crank-start from off, W or ↑ holds gas, S or ↓ holds brake, C holds clutch, A toggles auto, M toggles manual, [ shifts down, ] shifts up, P requests Park, and L toggles launch control.
           The previous speed wall happened because aerodynamic drag in the simplified drivetrain was too high, so acceleration balanced out far below realistic supercar speeds. This version rescales aero, preserves the gear-limited top speed, and lets capable builds reach 300+ km/h.
           Automatic mode now uses road-speed RPM projections, so it upshifts before sitting on the rev limiter. Manual mode requires lifting throttle and holding C clutch before shifting. Shift down from 1 to N, then down again from N to R; press P to request Park when stopped. Use Number of gears to choose a 1-speed through 10-speed transmission. The simulator rebuilds the gear ratios automatically and the automatic transmission will not shift above your selected top gear. Dual-clutch shifts fastest, single-clutch has a longer torque cut, and CVT holds the engine near its power band instead of stepping through fixed gears. Launch control holds revs while brake + gas are pressed, then boosts launch when brake is released.
         </p>

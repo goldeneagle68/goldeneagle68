@@ -69,6 +69,9 @@ const canvas = document.getElementById("sim");
 const ctx = canvas.getContext("2d");
 const $ = id => document.getElementById(id);
 const DEFAULT_SCENE_ZOOM = .90;
+const CANVAS_DPR = 1;
+const STARTER_DRIVE_RPM = 820;
+const STARTER_GRIND_SAMPLE_SRC = "assets/audio/metal-grinding-slow.mp3";
 
 const state = {
   on:false,
@@ -108,6 +111,11 @@ const state = {
   finalDrive:3.42,
   gearboxAnimation:true,
   starterTimer:0,
+  starterEngaged:false,
+  starterHoldTime:0,
+  starterMotorRpm:0,
+  starterMotorAngle:0,
+  starterGrinding:false,
   shiftTimer:0,
   shiftDuration:0,
   virtualRatio:0,
@@ -155,8 +163,20 @@ const state = {
   buildStats:{peakPower:0, peakOutput:0, maxSpeed:0, redlineHits:0, overheated:false, tractionLimited:false, samples:0}
 };
 
-let audioCtx, osc, gain, osc2, gain2, noise, noiseGain;
+let audioCtx, osc, gain, osc2, gain2, noise, noiseGain, starterOsc, starterGain, starterGrindAudio;
 let savedBuilds = [];
+let lastSlowUIKey = "";
+let resizeQueued = false;
+let lastGaugeUITime = 0;
+let lastLiveUITime = 0;
+let lastPhysicsTime = 0;
+let physicsAccumulator = 0;
+
+function setTextIfChanged(el, value){
+  if(!el) return;
+  const text = String(value);
+  if(el.textContent !== text) el.textContent = text;
+}
 
 function ensureAudioContext(){
   const AudioClass = window.AudioContext || window.webkitAudioContext;
@@ -168,16 +188,18 @@ function ensureAudioContext(){
 
 function resize(){
   const r = canvas.getBoundingClientRect();
-  const nextW = Math.max(640, Math.floor(r.width * devicePixelRatio));
-  const nextH = Math.max(420, Math.floor(r.height * devicePixelRatio));
-  if(canvas.width !== nextW) canvas.width = nextW;
-  if(canvas.height !== nextH) canvas.height = nextH;
+  const nextW = Math.max(640, Math.floor(r.width * CANVAS_DPR));
+  const nextH = Math.max(420, Math.floor(r.height * CANVAS_DPR));
+  if(Math.abs(canvas.width - nextW) > 1) canvas.width = nextW;
+  if(Math.abs(canvas.height - nextH) > 1) canvas.height = nextH;
 }
 function refreshCanvasSize(){
-  resize();
-  requestAnimationFrame(resize);
-  setTimeout(resize, 0);
-  setTimeout(resize, 250);
+  if(resizeQueued) return;
+  resizeQueued = true;
+  requestAnimationFrame(() => {
+    resizeQueued = false;
+    resize();
+  });
 }
 window.addEventListener("resize", refreshCanvasSize);
 if(window.ResizeObserver){
@@ -259,6 +281,77 @@ function stopAudio(){
   if(osc){ try{ osc.stop(); }catch(e){} osc = null; gain = null; }
   if(osc2){ try{ osc2.stop(); }catch(e){} osc2 = null; gain2 = null; }
   if(noise){ try{ noise.stop(); }catch(e){} noise = null; noiseGain = null; }
+}
+
+function ensureStarterGrindAudio(){
+  if(typeof Audio === "undefined") return null;
+  if(!starterGrindAudio){
+    starterGrindAudio = new Audio(STARTER_GRIND_SAMPLE_SRC);
+    starterGrindAudio.loop = true;
+    starterGrindAudio.preload = "auto";
+  }
+  return starterGrindAudio;
+}
+
+function startStarterAudio(){
+  try{
+    const ctxAudio = ensureAudioContext();
+    if(!ctxAudio || starterOsc) return;
+    starterOsc = ctxAudio.createOscillator();
+    starterGain = ctxAudio.createGain();
+    starterOsc.type = "sawtooth";
+    starterOsc.frequency.value = 90;
+    starterGain.gain.value = 0;
+    starterOsc.connect(starterGain);
+    starterGain.connect(ctxAudio.destination);
+    starterOsc.start();
+    const grindAudio = ensureStarterGrindAudio();
+    if(grindAudio && grindAudio.load) grindAudio.load();
+  }catch(err){
+    console.warn("Starter audio skipped:", err);
+    stopStarterAudio();
+  }
+}
+
+function stopStarterAudio(){
+  if(starterOsc){ try{ starterOsc.stop(); }catch(e){} starterOsc = null; starterGain = null; }
+  if(starterGrindAudio){
+    try{
+      starterGrindAudio.pause();
+      starterGrindAudio.currentTime = 0;
+    }catch(e){}
+  }
+}
+
+function updateStarterAudio(){
+  const cfg = getConfig();
+  const active = gearboxVisualApplies(cfg) && engineIdleRpm(cfg) > 0 && (!!state.starterEngaged || (state.starterTimer || 0) > 0);
+  if(!active){
+    stopStarterAudio();
+    return;
+  }
+  startStarterAudio();
+  if(!starterOsc || !starterGain) return;
+  const volume = Math.max(0, Math.min(1, (state.soundVolume ?? 70) / 100));
+  const ecoFactor = state.ecoMode ? .45 : 1;
+  const grind = !!state.starterGrinding;
+  const rpm = Math.max(0, state.starterMotorRpm || 0);
+  starterOsc.frequency.value = grind ? 145 + Math.random() * 38 : 74 + rpm / 8;
+  starterGain.gain.value = (grind ? .026 : .018) * volume * ecoFactor;
+  const grindAudio = ensureStarterGrindAudio();
+  if(grindAudio){
+    if(grind){
+      grindAudio.volume = Math.min(1, .85 * volume * ecoFactor);
+      grindAudio.playbackRate = .9 + Math.min(.35, Math.max(0, state.rpm - STARTER_DRIVE_RPM) / 2600);
+      if(grindAudio.paused){
+        const playPromise = grindAudio.play();
+        if(playPromise && playPromise.catch) playPromise.catch(()=>{});
+      }
+    }else if(!grindAudio.paused){
+      grindAudio.pause();
+      try{ grindAudio.currentTime = 0; }catch(e){}
+    }
+  }
 }
 
 function getEffectiveSoundMode(){
@@ -706,8 +799,6 @@ function setPanelMinimized(on){
   }
   updateSceneQuickControlsVisibility();
   refreshCanvasSize();
-  requestAnimationFrame(refreshCanvasSize);
-  setTimeout(refreshCanvasSize, 80);
 }
 
 function restorePanelMenus(e){
@@ -851,6 +942,11 @@ function syncInputsToState(){
   if(typeof state.pipesVisible !== "boolean") state.pipesVisible = true;
   if(typeof state.gearboxAnimation !== "boolean") state.gearboxAnimation = true;
   if(typeof state.starterTimer !== "number") state.starterTimer = 0;
+  if(typeof state.starterEngaged !== "boolean") state.starterEngaged = false;
+  if(typeof state.starterHoldTime !== "number") state.starterHoldTime = 0;
+  if(typeof state.starterMotorRpm !== "number") state.starterMotorRpm = 0;
+  if(typeof state.starterMotorAngle !== "number") state.starterMotorAngle = 0;
+  if(typeof state.starterGrinding !== "boolean") state.starterGrinding = false;
 
   if(cfg.extra1){
     $("extra1").min = cfg.extra1.min;
@@ -1537,11 +1633,18 @@ function applyDrivetrain(engineTorque, idle, freeTargetRpm, dt){
 
   const ratio = currentGearRatio();
   const coupledRpm = ratio !== 0 ? Math.max(idle, wheelRpm * Math.abs(ratio)) : idle;
-  const launchHold = selector === "D" && state.launchControl && getThrottle() > .85 && state.brake && speedAbs < 3;
+  const throttleNow = getThrottle();
+  const launchHold = selector === "D" && state.launchControl && throttleNow > .85 && state.brake && speedAbs < 3;
   const disconnected = state.clutch || selector === "P" || selector === "N" || state.shiftTimer > 0.02 || launchHold;
-  const blend = disconnected ? 0 : (state.transmissionType === "cvt" ? .78 : .90);
+  const lowSpeedSlip = !disconnected && selector === "D" && speedAbs < 12 && throttleNow > .04
+    ? Math.min(.46, throttleNow * .58 + Math.max(0, 12 - speedAbs) / 12 * .18)
+    : 0;
+  const baseBlend = state.transmissionType === "cvt" ? .78 : .90;
+  const blend = disconnected ? 0 : Math.max(.34, baseBlend - lowSpeedSlip);
   const targetRpm = launchHold ? state.revLimit * .58 : disconnected ? freeTargetRpm : freeTargetRpm * (1 - blend) + coupledRpm * blend;
-  state.rpm += (targetRpm - state.rpm) * (cfg.family === "electric" ? .14 : .105);
+  const idleTipIn = throttleNow > .04 && state.rpm < idle + 260 && targetRpm > state.rpm ? .065 : 0;
+  const rpmResponse = cfg.family === "electric" ? .14 : .105 + idleTipIn;
+  state.rpm += (targetRpm - state.rpm) * rpmResponse;
 
   // Realistic gearing: once a fixed gear reaches the rev limiter, acceleration is cut and speed is clamped.
   let limiterCut = 1;
@@ -1737,11 +1840,52 @@ function jetThrust(type, spoolNorm){
   return (22 + blades * 4.5 + diameter * 18 + gear * 1.4) * Math.pow(spoolNorm, .96) * fuelSystemOutputMultiplier(getConfig());
 }
 
+function updateStarterMotor(dt, cfg, idleRpm){
+  if(typeof state.starterMotorRpm !== "number") state.starterMotorRpm = 0;
+  if(typeof state.starterMotorAngle !== "number") state.starterMotorAngle = 0;
+  const canCrank = idleRpm > 0 && gearboxVisualApplies(cfg);
+  const manualActive = !!state.starterEngaged && canCrank;
+  const autoActive = (state.starterTimer || 0) > 0 && canCrank;
+  const active = manualActive || autoActive;
+  const flywheelRpm = Math.max(0, state.rpm || 0);
+
+  state.starterGrinding = manualActive && flywheelRpm > STARTER_DRIVE_RPM + 20;
+  const targetRpm = active ? STARTER_DRIVE_RPM : 0;
+  const response = active ? .22 : .14;
+  state.starterMotorRpm += (targetRpm - state.starterMotorRpm) * response;
+  if(Math.abs(state.starterMotorRpm) < .2 && !active) state.starterMotorRpm = 0;
+
+  const slipPulse = state.starterGrinding ? 1 + Math.sin(Date.now() * .05) * .18 : 1;
+  state.starterMotorAngle -= Math.max(0, state.starterMotorRpm) / 60 * Math.PI * 2 * dt * slipPulse;
+  return {active, manualActive, autoActive};
+}
+
+function startEngine(){
+  if(state.on) return;
+  const cfg = getConfig();
+  state.on = true;
+  state.starterTimer = engineIdleRpm(cfg) > 0 ? 1.25 : 0;
+  state.starterHoldTime = 0;
+  beep(160, .12, "sawtooth", .08);
+  startAudio();
+  state.rpm = Math.max(state.rpm, cfg.family === "jet" ? 180 : cfg.family === "electric" ? 0 : 90);
+}
+
+function stopEngine(){
+  if(!state.on) return;
+  state.on = false;
+  state.starterTimer = 0;
+  state.starterHoldTime = 0;
+  beep(120, .12, "sine", .04);
+  stopAudio();
+}
+
 
 function physics(dt){
   const cfg = getConfig();
   const th = getThrottle();
   const idleRpm = engineIdleRpm(cfg);
+  const starter = updateStarterMotor(dt, cfg, idleRpm);
   if(state.on && state.starterTimer > 0 && idleRpm > 0){
     state.rpm += (idleRpm * .82 - state.rpm) * .045;
     if(state.rpm >= idleRpm * .94) state.starterTimer = 0;
@@ -1749,15 +1893,25 @@ function physics(dt){
   }else if(state.starterTimer > 0){
     state.starterTimer = Math.max(0, state.starterTimer - dt);
   }
+  if(starter.manualActive && !state.starterGrinding && state.rpm < STARTER_DRIVE_RPM){
+    state.rpm += (STARTER_DRIVE_RPM - state.rpm) * .08;
+  }
 
   if(!state.on){
-    state.rpm += (0 - state.rpm) * .10;
+    const starterCranking = starter.manualActive && !state.starterGrinding;
+    state.starterHoldTime = starterCranking ? Math.min(2, (state.starterHoldTime || 0) + dt) : 0;
+    const rpmTarget = starterCranking ? Math.min(STARTER_DRIVE_RPM, idleRpm * .96) : 0;
+    state.rpm += (rpmTarget - state.rpm) * (starterCranking ? .12 : .10);
     state.aux += (0 - state.aux) * .08;
     state.temp += (20 - state.temp) * .02;
     state.output = 0;
     state.power = 0;
     state.speed = Math.max(0, state.speed - dt * 4);
     applyElectronicSpeedLimiter(dt);
+    state.crank += Math.max(0, state.rpm) / 60 * Math.PI * 2 * dt;
+    if(starterCranking && state.starterHoldTime >= 2){
+      startEngine();
+    }
     return;
   }
 
@@ -2091,9 +2245,10 @@ function drawGearboxAssembly(cx, cy, scale){
   const selector = normalizeGearSelector();
   const activeGear = selector === "D" ? Math.max(1, Math.min(gearCount, state.gear || 1)) : 0;
   const idleRpm = engineIdleRpm(cfg);
-  const starterActive = (state.starterTimer || 0) > 0 && idleRpm > 0 && state.rpm < idleRpm * .96;
+  const starterActive = ((state.starterTimer || 0) > 0 && idleRpm > 0 && state.rpm < idleRpm * .96) || !!state.starterEngaged;
+  const starterGrinding = starterActive && !!state.starterGrinding;
   const now = typeof performance !== "undefined" ? performance.now() / 1000 : Date.now() / 1000;
-  const inputAngle = state.crank + (starterActive ? now * 18 : 0);
+  const inputAngle = state.crank;
   const gearboxLocked = selector === "P";
   const finalDriveCoupled = selector === "D" || selector === "R";
   const gearInputAngle = gearboxLocked ? 0 : inputAngle;
@@ -2187,20 +2342,34 @@ function drawGearboxAssembly(cx, cy, scale){
   ctx.fillText("FLYWHEEL", 254, shaftY + 54);
 
   ctx.fillStyle = "#17212d";
-  ctx.strokeStyle = starterActive ? "#facc15" : "#64748b";
+  ctx.strokeStyle = starterGrinding ? "#ef4444" : starterActive ? "#facc15" : "#64748b";
   ctx.lineWidth = 2;
   roundRect(224, shaftY + 62, 108, 42, 17, true, true);
-  ctx.fillStyle = starterActive ? "#fef3c7" : "#9fb0c2";
+  ctx.fillStyle = starterGrinding ? "#fee2e2" : starterActive ? "#fef3c7" : "#9fb0c2";
   ctx.font = "bold 11px system-ui";
-  ctx.fillText(starterActive ? "STARTER ENGAGED" : "STARTER MOTOR", 234, shaftY + 88);
-  drawToothedGear(310, shaftY + 50, 13, 12, starterActive ? -now * 42 : 0, "#475569", starterActive ? "#facc15" : "#94a3b8", "", starterActive);
+  ctx.fillText(starterGrinding ? "METAL GRIND" : starterActive ? "STARTER ENGAGED" : "STARTER MOTOR", 234, shaftY + 88);
+  const starterGearAngle = starterActive ? (state.starterMotorAngle || 0) : 0;
+  drawToothedGear(310, shaftY + 50, 13, 12, starterGearAngle, "#475569", starterGrinding ? "#ef4444" : starterActive ? "#facc15" : "#94a3b8", "", starterActive);
   if(starterActive){
-    ctx.strokeStyle = "rgba(250,204,21,.72)";
+    ctx.strokeStyle = starterGrinding ? "rgba(248,113,113,.78)" : "rgba(250,204,21,.72)";
     ctx.lineWidth = 4;
     ctx.beginPath();
     ctx.moveTo(302, shaftY + 40);
     ctx.lineTo(292, shaftY + 16);
     ctx.stroke();
+    if(starterGrinding){
+      ctx.fillStyle = "#f97316";
+      for(let i=0;i<7;i++){
+        const a = now * 18 + i * .9;
+        ctx.beginPath();
+        ctx.arc(296 + Math.cos(a) * (8 + i), shaftY + 31 + Math.sin(a * 1.4) * 10, 1.7, 0, Math.PI * 2);
+        ctx.fill();
+      }
+      ctx.fillStyle = "#fecaca";
+      ctx.font = "bold 9px system-ui";
+      ctx.fillText(`${Math.round(state.rpm || 0)} rpm flywheel`, 224, shaftY + 116);
+      ctx.fillText(`${Math.round(state.starterMotorRpm || 0)} rpm starter`, 224, shaftY + 128);
+    }
   }
 
   ctx.fillStyle = "#111821";
@@ -4635,8 +4804,8 @@ function getSceneScale(baseScale){
 
 function getSceneCenter(w, h){
   return {
-    x: w * .5 + state.scenePanX * devicePixelRatio,
-    y: h * .46 + state.scenePanY * devicePixelRatio
+    x: w * .5 + state.scenePanX * CANVAS_DPR,
+    y: h * .46 + state.scenePanY * CANVAS_DPR
   };
 }
 
@@ -4744,10 +4913,10 @@ function draw(){
   if(!state.ecoMode){
     ctx.strokeStyle = "rgba(255,255,255,.04)";
     ctx.lineWidth = 1;
-    for(let x=0;x<w;x+=50*devicePixelRatio){
+    for(let x=0;x<w;x+=50*CANVAS_DPR){
       ctx.beginPath(); ctx.moveTo(x,0); ctx.lineTo(x,h); ctx.stroke();
     }
-    for(let y=0;y<h;y+=50*devicePixelRatio){
+    for(let y=0;y<h;y+=50*CANVAS_DPR){
       ctx.beginPath(); ctx.moveTo(0,y); ctx.lineTo(w,y); ctx.stroke();
     }
   }
@@ -4755,7 +4924,7 @@ function draw(){
   // EXTEND, don't stretch: when the side menu is hidden, keep the original
   // scene scale/anchor as if the 410px menu still existed. The extra width
   // becomes additional canvas space to the right instead of resizing the engine.
-  const lockedSceneW = state.panelMinimized ? Math.max(640 * devicePixelRatio, w - 410 * devicePixelRatio) : w;
+  const lockedSceneW = state.panelMinimized ? Math.max(640 * CANVAS_DPR, w - 410 * CANVAS_DPR) : w;
   const baseS = Math.min(lockedSceneW/980, h/620);
   const s = getSceneScale(baseS);
   const center = getSceneCenter(lockedSceneW, h);
@@ -4763,12 +4932,12 @@ function draw(){
 
   ctx.save();
   ctx.translate(center.x, center.y);
-  ctx.scale(s*devicePixelRatio, s*devicePixelRatio);
-  ctx.translate(-lockedSceneW*.5/(s*devicePixelRatio), -h*.46/(s*devicePixelRatio));
+  ctx.scale(s*CANVAS_DPR, s*CANVAS_DPR);
+  ctx.translate(-lockedSceneW*.5/(s*CANVAS_DPR), -h*.46/(s*CANVAS_DPR));
 
   const sceneCX = lockedSceneW*.5;
   const sceneCY = h*.46;
-  const drawScale = baseS*devicePixelRatio;
+  const drawScale = baseS*CANVAS_DPR;
   if(cfg.family === "piston"){
     drawPistonBanks(sceneCX, sceneCY, drawScale);
   } else if(cfg.family === "rotary"){
@@ -4796,7 +4965,7 @@ function draw(){
   ctx.restore();
 
   if(state.graphVisible){
-    drawGraph(24*devicePixelRatio, h - 190*devicePixelRatio, Math.min(420*devicePixelRatio, w*.45), 150*devicePixelRatio);
+    drawGraph(24*CANVAS_DPR, h - 190*CANVAS_DPR, Math.min(420*CANVAS_DPR, w*.45), 150*CANVAS_DPR);
   }
   requestAnimationFrame(draw);
 }
@@ -4978,108 +5147,163 @@ function updateDashboardGauges(cfg){
 
 function updateUI(){
   const cfg = getConfig();
-  refreshBodyTypeOptions();
-  $("runStatus").textContent = state.on ? "Engine running" : "Engine off";
+  if(!gearboxVisualApplies(cfg) || engineIdleRpm(cfg) <= 0){
+    state.starterEngaged = false;
+    state.starterHoldTime = 0;
+    state.starterGrinding = false;
+  }
+  const slowUIKey = [
+    state.type,state.units,state.displacement,state.compression,state.extra1,state.extra2,state.revLimit,state.fuelSystem,
+    state.turboAddon,state.hybridSystem,state.nuclearFission,state.secondaryEngine,state.systemPower,state.fuelTanks,
+    state.load,state.fuel,state.timing,state.aircraftSpeedCommand,
+    state.vehicleDrive,state.bodyType,state.spoilerPackage,state.tireType,state.tireSize,state.rimStyle,
+    state.speedLimiterEnabled,state.speedLimitKmh,state.gearCount,state.transmissionMode,state.transmissionType,state.finalDrive,
+    state.gearboxAnimation,state.gaugeStyle,state.gaugeDisplayMode,state.engineCover,state.exhaustManifold,
+    state.intakePipeOffset,state.exhaustPipeOffset,state.pipesVisible,state.soundMode,state.soundVolume,
+    state.dynoGraphMode,state.overlayMinimized,state.ecoMode,state.mobileMode,state.panelMinimized,state.experienceMode,
+    state.noteOpen,state.launchControl,state.gearSelector
+  ].join("|");
+  const refreshSlowUI = slowUIKey !== lastSlowUIKey;
+  if(refreshSlowUI){
+    lastSlowUIKey = slowUIKey;
+    refreshBodyTypeOptions();
+  }
+  setTextIfChanged($("runStatus"), state.on ? "Engine running" : "Engine off");
   $("runStatus").style.background = state.on ? "#22c55e" : "#e8eef7";
   $("startBtn").classList.toggle("on", state.on);
   $("startBtn").textContent = state.on ? "ENGINE RUNNING" : "START ENGINE";
-  if($("soundVolumeOut")) $("soundVolumeOut").textContent = `${Math.round(state.soundVolume || 0)}%`;
-  if($("soundVolume")) $("soundVolume").value = state.soundVolume ?? 70;
-  if($("soundMode")) $("soundMode").value = state.soundMode || "auto";
-  if($("dynoGraphMode")) $("dynoGraphMode").value = state.dynoGraphMode || "powerTorque";
+  if($("starterBtn")){
+    const starterApplies = gearboxVisualApplies(cfg) && engineIdleRpm(cfg) > 0;
+    const crankingToStart = starterApplies && !state.on && state.starterEngaged && !state.starterGrinding;
+    $("starterBtn").disabled = !starterApplies;
+    $("starterBtn").classList.toggle("down", !!state.starterEngaged);
+    $("starterBtn").classList.toggle("grinding", !!state.starterGrinding);
+    const starterText = !starterApplies
+      ? "STARTER NOT AVAILABLE"
+      : state.starterGrinding
+        ? "STARTER GRINDING · V"
+        : crankingToStart
+          ? `CRANKING ${Math.min(2, state.starterHoldTime || 0).toFixed(1)} / 2.0s`
+          : state.starterEngaged
+            ? "STARTER ENGAGED · V"
+            : "ENGAGE STARTER · V";
+    setTextIfChanged($("starterBtn"), starterText);
+  }
+  if(refreshSlowUI){
+    if($("soundVolumeOut")) $("soundVolumeOut").textContent = `${Math.round(state.soundVolume || 0)}%`;
+    if($("soundVolume")) $("soundVolume").value = state.soundVolume ?? 70;
+    if($("soundMode")) $("soundMode").value = state.soundMode || "auto";
+    if($("dynoGraphMode")) $("dynoGraphMode").value = state.dynoGraphMode || "powerTorque";
+  }
   normalizeFuelSystem();
-  if($("fuelSystem")) $("fuelSystem").value = state.fuelSystem;
-  if($("fuelSystemOut")) $("fuelSystemOut").textContent = fuelSystemLabel();
+  if(refreshSlowUI){
+    if($("fuelSystem")) $("fuelSystem").value = state.fuelSystem;
+    if($("fuelSystemOut")) $("fuelSystemOut").textContent = fuelSystemLabel();
+  }
 
-  updateReadoutLabels();
+  if(refreshSlowUI) updateReadoutLabels();
   updateBuildStats(cfg);
-  updateBuildSummary();
+  if(refreshSlowUI) updateBuildSummary();
 
-  const premiumBits = [state.turboAddon !== "none" ? "+ " + state.turboAddon.replace("_","-") + " turbo" : "", state.hybridSystem !== "none" ? "+ " + (state.hybridSystem === "fuel_cell" ? "fuel cell" : state.hybridSystem + " hybrid") : "", state.nuclearFission !== "none" ? "+ nuclear" : "", state.secondaryEngine !== "none" ? "+ " + state.secondaryEngine : ""].filter(Boolean);
-  const premiumType = ["w","v12","v16","h_engine","x_engine","compound_piston","geared_turbofan","scramjet","rocket","fuel_cell"].includes(state.type);
-  $("layoutLabel").textContent = (premiumType ? "⚜ " : "") + cfg.label + (premiumBits.length ? " " + premiumBits.join(" ") : "");
-  $("configLabel").textContent = `${cfg.units.name}: ${formatValue(state.units)}`;
-  $("rpmOut").textContent = Math.round(state.rpm);
-  $("gearOut").textContent = transmissionApplies(cfg) ? gearDisplayLabel() : "—";
-  $("speedOut").textContent = speedDisplayText();
-  $("transmissionLabel").textContent = cfg.family === "jet" ? `Aircraft · ${speedDisplayText()}` : transmissionApplies(cfg) ? `${state.transmissionMode === "auto" ? "A" : "M"}${gearDisplayLabel()} · ${speedDisplayText()}` : "Direct drive";
+  if(refreshSlowUI){
+    const premiumBits = [state.turboAddon !== "none" ? "+ " + state.turboAddon.replace("_","-") + " turbo" : "", state.hybridSystem !== "none" ? "+ " + (state.hybridSystem === "fuel_cell" ? "fuel cell" : state.hybridSystem + " hybrid") : "", state.nuclearFission !== "none" ? "+ nuclear" : "", state.secondaryEngine !== "none" ? "+ " + state.secondaryEngine : ""].filter(Boolean);
+    const premiumType = ["w","v12","v16","h_engine","x_engine","compound_piston","geared_turbofan","scramjet","rocket","fuel_cell"].includes(state.type);
+    $("layoutLabel").textContent = (premiumType ? "⚜ " : "") + cfg.label + (premiumBits.length ? " " + premiumBits.join(" ") : "");
+    $("configLabel").textContent = `${cfg.units.name}: ${formatValue(state.units)}`;
+  }
+  setTextIfChanged($("rpmOut"), Math.round(state.rpm));
+  setTextIfChanged($("gearOut"), transmissionApplies(cfg) ? gearDisplayLabel() : "—");
+  setTextIfChanged($("speedOut"), speedDisplayText());
+  setTextIfChanged($("transmissionLabel"), cfg.family === "jet" ? `Aircraft · ${speedDisplayText()}` : transmissionApplies(cfg) ? `${state.transmissionMode === "auto" ? "A" : "M"}${gearDisplayLabel()} · ${speedDisplayText()}` : "Direct drive");
 
   if(cfg.family === "jet"){
-    $("outputOut").textContent = `${state.output.toFixed(1)} kN`;
-    $("powerOut").textContent = `${Math.round(state.power)} ${state.type === "turboprop" ? "shp" : "hp eq."}`;
-    if(state.type === "turbofan") $("auxOut").textContent = `${(state.extra1 || 0).toFixed(1)}`;
-    else if(state.type === "turboprop") $("auxOut").textContent = `${(state.extra1 || 0).toFixed(1)} m`;
-    else $("auxOut").textContent = state.afterburner ? "ON" : "OFF";
-    $("tempOut").textContent = `${Math.round(state.temp + 350)}°C`;
+    setTextIfChanged($("outputOut"), `${state.output.toFixed(1)} kN`);
+    setTextIfChanged($("powerOut"), `${Math.round(state.power)} ${state.type === "turboprop" ? "shp" : "hp eq."}`);
+    if(state.type === "turbofan") setTextIfChanged($("auxOut"), `${(state.extra1 || 0).toFixed(1)}`);
+    else if(state.type === "turboprop") setTextIfChanged($("auxOut"), `${(state.extra1 || 0).toFixed(1)} m`);
+    else setTextIfChanged($("auxOut"), state.afterburner ? "ON" : "OFF");
+    setTextIfChanged($("tempOut"), `${Math.round(state.temp + 350)}°C`);
   } else if(cfg.family === "electric"){
-    $("outputOut").textContent = `${Math.round(state.output)} Nm`;
-    $("powerOut").textContent = `${Math.round(state.power)} hp`;
-    $("auxOut").textContent = state.type === "fuel_cell" ? `${Math.round(state.extra2 || 0)} bar` : `${Math.round(state.extra1 || 0)} V`;
-    $("tempOut").textContent = `${Math.round(state.temp)}°C`;
+    setTextIfChanged($("outputOut"), `${Math.round(state.output)} Nm`);
+    setTextIfChanged($("powerOut"), `${Math.round(state.power)} hp`);
+    setTextIfChanged($("auxOut"), state.type === "fuel_cell" ? `${Math.round(state.extra2 || 0)} bar` : `${Math.round(state.extra1 || 0)} V`);
+    setTextIfChanged($("tempOut"), `${Math.round(state.temp)}°C`);
   } else {
-    $("outputOut").textContent = `${Math.round(state.output)} Nm`;
-    $("powerOut").textContent = `${Math.round(state.power)} hp`;
-    if(state.type.includes("hybrid")) $("auxOut").textContent = `${Math.round(state.extra2 || 0)}%`;
-    else if(state.type.includes("turbo")) $("auxOut").textContent = `${(state.extra1 || 0).toFixed(1)} bar`;
-    else $("auxOut").textContent = `${state.aux.toFixed(1)} bar`;
-    $("tempOut").textContent = `${Math.round(state.temp)}°C`;
+    setTextIfChanged($("outputOut"), `${Math.round(state.output)} Nm`);
+    setTextIfChanged($("powerOut"), `${Math.round(state.power)} hp`);
+    if(state.type.includes("hybrid")) setTextIfChanged($("auxOut"), `${Math.round(state.extra2 || 0)}%`);
+    else if(state.type.includes("turbo")) setTextIfChanged($("auxOut"), `${(state.extra1 || 0).toFixed(1)} bar`);
+    else setTextIfChanged($("auxOut"), `${state.aux.toFixed(1)} bar`);
+    setTextIfChanged($("tempOut"), `${Math.round(state.temp)}°C`);
   }
 
-  updateDashboardGauges(cfg);
+  const nowMs = typeof performance !== "undefined" ? performance.now() : Date.now();
+  if(refreshSlowUI || nowMs - lastGaugeUITime > 16){
+    lastGaugeUITime = nowMs;
+    updateDashboardGauges(cfg);
+  }
 
-  $("throttleOut").textContent = `${Math.round(Math.max(state.throttle, state.gas ? 100 : 0))}%`;
-  if($("aircraftThrottleOut")) $("aircraftThrottleOut").textContent = `${Math.round(state.throttle)}%`;
-  if($("aircraftSpeedOut")) $("aircraftSpeedOut").textContent = `${Math.round(state.aircraftSpeedCommand || 0)} km/h`;
-  $("loadOut").textContent = `${state.load}%`;
-  if($("tireSizeOut")) $("tireSizeOut").textContent = `${Math.round(state.tireSize || 20)} in`;
-  if($("tireType") && $("tireType").value !== state.tireType) $("tireType").value = state.tireType;
-  if($("rimStyle") && $("rimStyle").value !== state.rimStyle) $("rimStyle").value = state.rimStyle;
+  setTextIfChanged($("throttleOut"), `${Math.round(Math.max(state.throttle, state.gas ? 100 : 0))}%`);
+  if($("aircraftThrottleOut")) setTextIfChanged($("aircraftThrottleOut"), `${Math.round(state.throttle)}%`);
+  if($("aircraftSpeedOut")) setTextIfChanged($("aircraftSpeedOut"), `${Math.round(state.aircraftSpeedCommand || 0)} km/h`);
+  if(refreshSlowUI){
+    $("loadOut").textContent = `${state.load}%`;
+    if($("tireSizeOut")) $("tireSizeOut").textContent = `${Math.round(state.tireSize || 20)} in`;
+    if($("tireType") && $("tireType").value !== state.tireType) $("tireType").value = state.tireType;
+    if($("rimStyle") && $("rimStyle").value !== state.rimStyle) $("rimStyle").value = state.rimStyle;
+  }
   normalizeSpeedLimiter();
-  if($("speedLimitOut")) $("speedLimitOut").textContent = `${state.speedLimitKmh} km/h`;
-  if($("speedLimitKmh") && +$("speedLimitKmh").value !== state.speedLimitKmh) $("speedLimitKmh").value = state.speedLimitKmh;
-  if($("speedLimiterBtn")){
-    $("speedLimiterBtn").textContent = state.speedLimiterEnabled ? (state.speedLimiterActive ? "Electronic speed limiter active" : "Electronic speed limiter on") : "Electronic speed limiter off";
-    $("speedLimiterBtn").classList.toggle("active", state.speedLimiterEnabled);
-  }
-  if($("gaugeDisplayMode") && $("gaugeDisplayMode").value !== (state.gaugeDisplayMode || "analog")) $("gaugeDisplayMode").value = state.gaugeDisplayMode || "analog";
-  if($("gaugeStyle") && $("gaugeStyle").value !== (state.gaugeStyle || "classic")) $("gaugeStyle").value = state.gaugeStyle || "classic";
-  $("dispOut").textContent = `${state.displacement.toFixed(1)} L`;
-  $("compOut").textContent = `${state.compression.toFixed(1)}:1`;
-  $("fuelOut").textContent = `${state.fuel.toFixed(2)} λ`;
-  $("timingOut").textContent = `${state.timing}°`;
-  $("limitOut").textContent = `${state.revLimit} rpm`;
-  if($("systemPowerOut")) $("systemPowerOut").textContent = `${state.systemPower}%`;
-  if($("engineCover") && $("engineCover").value !== state.engineCover) $("engineCover").value = state.engineCover;
-  if($("exhaustManifold") && $("exhaustManifold").value !== (state.exhaustManifold || "equal_length_headers")) $("exhaustManifold").value = state.exhaustManifold || "equal_length_headers";
-  if($("intakePipeOffsetOut")) $("intakePipeOffsetOut").textContent = `${state.intakePipeOffset || 0} px`;
-  if($("exhaustPipeOffsetOut")) $("exhaustPipeOffsetOut").textContent = `${state.exhaustPipeOffset || 0} px`;
-  if($("intakePipeOffset") && +$("intakePipeOffset").value !== (state.intakePipeOffset || 0)) $("intakePipeOffset").value = state.intakePipeOffset || 0;
-  if($("exhaustPipeOffset") && +$("exhaustPipeOffset").value !== (state.exhaustPipeOffset || 0)) $("exhaustPipeOffset").value = state.exhaustPipeOffset || 0;
-  if($("pipesVisibleBtn")){
-    $("pipesVisibleBtn").textContent = state.pipesVisible === false ? "Pipes hidden" : "Pipes visible";
-    $("pipesVisibleBtn").classList.toggle("active", state.pipesVisible !== false);
-  }
-  if($("fuelTankBtn")){
-    const tanksMatter = activeTanksUsedByCurrentBuild();
-    $("fuelTankBtn").disabled = false;
-    $("fuelTankBtn").textContent = state.fuelTanks ? (tanksMatter ? "Fuel tanks visible / forced on" : "Fuel tanks forced on") : "Fuel tanks hidden";
-    $("fuelTankBtn").classList.toggle("on", state.fuelTanks);
-  }
-  updateFamousMatchUI();
-  toggleOverlayInfo(state.overlayMinimized);
-  setEcoMode(state.ecoMode);
-  setMobileMode(state.mobileMode);
-  setPanelMinimized(state.panelMinimized);
-  refreshSceneIndicator();
-  updateVehiclePreview();
-  $("unitsOut").textContent = `${cfg.units.name}: ${formatValue(state.units)}`;
-  if(cfg.extra1) $("extra1Out").textContent = formatValue(state.extra1, cfg.extra1.suffix || "");
-  if(cfg.extra2) $("extra2Out").textContent = formatValue(state.extra2, cfg.extra2.suffix || "");
+  if(refreshSlowUI){
+    if($("speedLimitOut")) $("speedLimitOut").textContent = `${state.speedLimitKmh} km/h`;
+    if($("speedLimitKmh") && +$("speedLimitKmh").value !== state.speedLimitKmh) $("speedLimitKmh").value = state.speedLimitKmh;
+    if($("speedLimiterBtn")){
+      $("speedLimiterBtn").textContent = state.speedLimiterEnabled ? (state.speedLimiterActive ? "Electronic speed limiter active" : "Electronic speed limiter on") : "Electronic speed limiter off";
+      $("speedLimiterBtn").classList.toggle("active", state.speedLimiterEnabled);
+    }
+    if($("gaugeDisplayMode") && $("gaugeDisplayMode").value !== (state.gaugeDisplayMode || "analog")) $("gaugeDisplayMode").value = state.gaugeDisplayMode || "analog";
+    if($("gaugeStyle") && $("gaugeStyle").value !== (state.gaugeStyle || "classic")) $("gaugeStyle").value = state.gaugeStyle || "classic";
+    $("dispOut").textContent = `${state.displacement.toFixed(1)} L`;
+    $("compOut").textContent = `${state.compression.toFixed(1)}:1`;
+    $("fuelOut").textContent = `${state.fuel.toFixed(2)} λ`;
+    $("timingOut").textContent = `${state.timing}°`;
+    $("limitOut").textContent = `${state.revLimit} rpm`;
+    if($("systemPowerOut")) $("systemPowerOut").textContent = `${state.systemPower}%`;
+    if($("engineCover") && $("engineCover").value !== state.engineCover) $("engineCover").value = state.engineCover;
+    if($("exhaustManifold") && $("exhaustManifold").value !== (state.exhaustManifold || "equal_length_headers")) $("exhaustManifold").value = state.exhaustManifold || "equal_length_headers";
+    if($("intakePipeOffsetOut")) $("intakePipeOffsetOut").textContent = `${state.intakePipeOffset || 0} px`;
+    if($("exhaustPipeOffsetOut")) $("exhaustPipeOffsetOut").textContent = `${state.exhaustPipeOffset || 0} px`;
+    if($("intakePipeOffset") && +$("intakePipeOffset").value !== (state.intakePipeOffset || 0)) $("intakePipeOffset").value = state.intakePipeOffset || 0;
+    if($("exhaustPipeOffset") && +$("exhaustPipeOffset").value !== (state.exhaustPipeOffset || 0)) $("exhaustPipeOffset").value = state.exhaustPipeOffset || 0;
+    if($("pipesVisibleBtn")){
+      $("pipesVisibleBtn").textContent = state.pipesVisible === false ? "Pipes hidden" : "Pipes visible";
+      $("pipesVisibleBtn").classList.toggle("active", state.pipesVisible !== false);
+    }
+    if($("fuelTankBtn")){
+      const tanksMatter = activeTanksUsedByCurrentBuild();
+      $("fuelTankBtn").disabled = false;
+      $("fuelTankBtn").textContent = state.fuelTanks ? (tanksMatter ? "Fuel tanks visible / forced on" : "Fuel tanks forced on") : "Fuel tanks hidden";
+      $("fuelTankBtn").classList.toggle("on", state.fuelTanks);
+    }
+    updateFamousMatchUI();
+    toggleOverlayInfo(state.overlayMinimized);
+    setEcoMode(state.ecoMode);
+    setMobileMode(state.mobileMode);
+    setPanelMinimized(state.panelMinimized);
+    refreshSceneIndicator();
+    updateVehiclePreview();
+    $("unitsOut").textContent = `${cfg.units.name}: ${formatValue(state.units)}`;
+    if(cfg.extra1) $("extra1Out").textContent = formatValue(state.extra1, cfg.extra1.suffix || "");
+    if(cfg.extra2) $("extra2Out").textContent = formatValue(state.extra2, cfg.extra2.suffix || "");
 
-  refreshDynamicControls();
-  refreshTransmissionControls();
+    refreshDynamicControls();
+    refreshTransmissionControls();
+  }
 
-  if(state.temp > 115 && cfg.family !== "jet"){
+  if(state.starterGrinding){
+    $("warning").textContent = "Starter gear grinding: flywheel is faster than the starter motor.";
+  } else if(!state.on && state.starterEngaged && (state.starterHoldTime || 0) > 0){
+    $("warning").textContent = "Starter cranking: hold V for 2 seconds to start the engine.";
+  } else if(state.temp > 115 && cfg.family !== "jet"){
     $("warning").textContent = "Warning: overheating. Reduce throttle or cool engine.";
   } else if(cfg.family === "jet" && state.temp > 250){
     $("warning").textContent = "Warning: high exhaust gas temperature.";
@@ -5092,9 +5316,19 @@ function updateUI(){
   }
 }
 
-function step(){
-  physics(1/60);
-  dynoStep();
+function step(timestamp){
+  const now = Number.isFinite(timestamp) ? timestamp : (typeof performance !== "undefined" ? performance.now() : Date.now());
+  const frameDt = lastPhysicsTime ? Math.min(.12, Math.max(0, (now - lastPhysicsTime) / 1000)) : 1 / 60;
+  lastPhysicsTime = now;
+  physicsAccumulator = Math.min(.12, physicsAccumulator + frameDt);
+  let physicsSteps = 0;
+  while(physicsAccumulator >= 1 / 60 && physicsSteps < 7){
+    physics(1/60);
+    dynoStep();
+    physicsAccumulator -= 1 / 60;
+    physicsSteps++;
+  }
+  if(physicsSteps >= 7) physicsAccumulator = 0;
 
   if(osc){
     const cfg = getConfig();
@@ -5124,8 +5358,13 @@ function step(){
       noiseGain.gain.value = state.on ? (.002 + jetNoise + turboHiss + fuelCellAir + famousNoise + (profile.noise || .35)*.008 + th*.004) * (state.ecoMode ? .28 : 1) * volume : 0;
     }
   }
+  updateStarterAudio();
 
-  updateUI();
+  const uiNow = typeof performance !== "undefined" ? performance.now() : Date.now();
+  if(uiNow - lastLiveUITime > 16){
+    lastLiveUITime = uiNow;
+    updateUI();
+  }
   requestAnimationFrame(step);
 }
 
@@ -5323,20 +5562,38 @@ function setup(){
 
   $("revLimit").oninput = e => { state.revLimit = +e.target.value; };
 
-  $("startBtn").onclick = () => {
-    state.on = !state.on;
-    if(state.on){
-      const cfg = getConfig();
-      state.starterTimer = engineIdleRpm(cfg) > 0 ? 1.25 : 0;
-      beep(160, .12, "sawtooth", .08);
-      startAudio();
-      state.rpm = Math.max(state.rpm, cfg.family === "jet" ? 180 : cfg.family === "electric" ? 0 : 90);
-    }else{
-      state.starterTimer = 0;
-      beep(120, .12, "sine", .04);
-      stopAudio();
+  function setStarterEngaged(active, ev){
+    if(ev) ev.preventDefault();
+    const cfg = getConfig();
+    if(active && (!gearboxVisualApplies(cfg) || engineIdleRpm(cfg) <= 0)){
+      state.starterEngaged = false;
+      state.starterHoldTime = 0;
+      state.starterGrinding = false;
+      updateUI();
+      return;
     }
+    state.starterEngaged = !!active;
+    if(state.starterEngaged) startStarterAudio();
+    else{
+      state.starterHoldTime = 0;
+      state.starterGrinding = false;
+    }
+    updateUI();
+  }
+
+  $("startBtn").onclick = () => {
+    if(state.on) stopEngine();
+    else startEngine();
   };
+
+  if($("starterBtn")){
+    const starterDown = ev => setStarterEngaged(true, ev);
+    const starterUp = ev => setStarterEngaged(false, ev);
+    $("starterBtn").onpointerdown = starterDown;
+    $("starterBtn").onpointerup = starterUp;
+    $("starterBtn").onpointerleave = starterUp;
+    $("starterBtn").onpointercancel = starterUp;
+  }
 
   ["clutch","brake","gas"].forEach(id => {
     const el = $(id);
@@ -5385,12 +5642,14 @@ function setup(){
     if(e.shiftKey && e.key === "ArrowUp"){ state.scenePanY -= 24; clampSceneView(); e.preventDefault(); }
     if(e.shiftKey && e.key === "ArrowDown"){ state.scenePanY += 24; clampSceneView(); e.preventDefault(); }
 
+    if(e.key === "v" || e.key === "V"){ setStarterEngaged(true, e); }
     if(e.key === "w" || e.key === "W" || e.key === "ArrowUp"){ state.gas = true; $("gas").classList.add("down"); if($("sceneGasBtn")) $("sceneGasBtn").classList.add("down"); e.preventDefault(); }
     if(e.key === "s" || e.key === "S" || e.key === "ArrowDown"){ state.brake = true; $("brake").classList.add("down"); if($("sceneBrakeBtn")) $("sceneBrakeBtn").classList.add("down"); e.preventDefault(); }
     if(e.key === "c" || e.key === "C"){ state.clutch = true; $("clutch").classList.add("down"); if($("sceneClutchBtn")) $("sceneClutchBtn").classList.add("down"); }
   });
 
   window.addEventListener("keyup", e => {
+    if(e.key === "v" || e.key === "V"){ setStarterEngaged(false, e); }
     if(e.key === "w" || e.key === "W" || e.key === "ArrowUp"){ state.gas = false; $("gas").classList.remove("down"); if($("sceneGasBtn")) $("sceneGasBtn").classList.remove("down"); }
     if(e.key === "s" || e.key === "S" || e.key === "ArrowDown"){ state.brake = false; $("brake").classList.remove("down"); if($("sceneBrakeBtn")) $("sceneBrakeBtn").classList.remove("down"); }
     if(e.key === "c" || e.key === "C"){ state.clutch = false; $("clutch").classList.remove("down"); if($("sceneClutchBtn")) $("sceneClutchBtn").classList.remove("down"); }
@@ -5420,10 +5679,11 @@ function setup(){
       on:false, type:"v", units:8, displacement:4.0, compression:10.0, extra1:0, extra2:0,
       afterburner:false, throttle:0, gas:false, clutch:false, brake:false, load:35,
       fuel:1.0, fuelSystem:"injection", timing:0, revLimit:7000, rpm:0, temp:20, output:0, power:0, aux:0, crank:0,
-      speed:0, gear:1, gearSelector:"P", shiftBlockedReason:"", lastShiftTime:0, shiftFromGear:1, gearCount:7, transmissionMode:"auto", transmissionType:"dct", launchControl:false, finalDrive:3.42, gearboxAnimation:true, starterTimer:0, shiftTimer:0, shiftDuration:0, virtualRatio:0, noteOpen:false, graphVisible:true, dynoGraphMode:"powerTorque", soundMode:"auto", soundVolume:70, raceResults:[], engineCover:"none", exhaustManifold:"equal_length_headers", intakePipeOffset:0, exhaustPipeOffset:0, pipesVisible:true,
+      speed:0, gear:1, gearSelector:"P", shiftBlockedReason:"", lastShiftTime:0, shiftFromGear:1, gearCount:7, transmissionMode:"auto", transmissionType:"dct", launchControl:false, finalDrive:3.42, gearboxAnimation:true, starterTimer:0, starterEngaged:false, starterHoldTime:0, starterMotorRpm:0, starterMotorAngle:0, starterGrinding:false, shiftTimer:0, shiftDuration:0, virtualRatio:0, noteOpen:false, graphVisible:true, dynoGraphMode:"powerTorque", soundMode:"auto", soundVolume:70, raceResults:[], engineCover:"none", exhaustManifold:"equal_length_headers", intakePipeOffset:0, exhaustPipeOffset:0, pipesVisible:true,
       dyno:false, dynoRpm:1000, dynoData:[], turboAddon:"none", hybridSystem:"none", nuclearFission:"none", secondaryEngine:"none", systemPower:50, fuelTanks:true, scenePanX:0, scenePanY:0, sceneZoom:DEFAULT_SCENE_ZOOM, overlayMinimized:true, ecoMode:false, lastMatchedProfile:null, vehicleDrive:"rwd", bodyType:"coupe", spoilerPackage:"none", tireType:"street", tireSize:20, rimStyle:"alloy", speedLimiterEnabled:false, speedLimitKmh:120, speedLimiterActive:false, gaugeStyle:"classic", gaugeDisplayMode:"analog", panelMinimized:false, mobileMode:false, experienceMode:"advanced", buildStats:makeEmptyBuildStats()
     });
     stopAudio();
+    stopStarterAudio();
     $("throttleSlider").value = 0;
     $("loadSlider").value = 35;
     $("fuel").value = 1.0;
